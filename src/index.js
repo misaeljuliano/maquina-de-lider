@@ -16,6 +16,61 @@ export default {
 
     /*
      * ============================================================
+     * PHONE HELPERS
+     * Aproximadamente linhas 20-65
+     * ============================================================
+     */
+
+    function normalizePhone(value) {
+      let digits = String(value || "").replace(/\D/g, "");
+
+      /*
+       * Remove código do país +55 caso o navegador/autocomplete
+       * tenha inserido automaticamente.
+       */
+      if (digits.length > 11 && digits.startsWith("55")) {
+        digits = digits.substring(2);
+      }
+
+      return digits;
+    }
+
+    function formatPhone(value) {
+      const digits = normalizePhone(value);
+
+      if (digits.length === 8) {
+        return digits.replace(
+          /^(\d{4})(\d{4})$/,
+          "$1-$2"
+        );
+      }
+
+      if (digits.length === 9) {
+        return digits.replace(
+          /^(\d{5})(\d{4})$/,
+          "$1-$2"
+        );
+      }
+
+      if (digits.length === 10) {
+        return digits.replace(
+          /^(\d{2})(\d{4})(\d{4})$/,
+          "($1) $2-$3"
+        );
+      }
+
+      if (digits.length === 11) {
+        return digits.replace(
+          /^(\d{2})(\d{5})(\d{4})$/,
+          "($1) $2-$3"
+        );
+      }
+
+      return digits;
+    }
+
+    /*
+     * ============================================================
      * POST - RECEIVE AND SAVE LEAD
      * ============================================================
      */
@@ -54,6 +109,11 @@ export default {
         const name =
           String(data.name || "").trim();
 
+        const customerPhone =
+          normalizePhone(
+            data.customer_phone
+          );
+
         const address =
           String(data.address || "").trim();
 
@@ -64,6 +124,32 @@ export default {
           String(
             data.product_searched || ""
           ).trim();
+
+        /*
+         * ========================================================
+         * VALIDATE PHONE
+         * ========================================================
+         */
+
+        if (
+          customerPhone.length < 8 ||
+          customerPhone.length > 11
+        ) {
+          return new Response(
+            JSON.stringify({
+              success: false,
+              error:
+                "Digite um telefone válido com 8 a 11 dígitos."
+            }),
+            {
+              status: 400,
+              headers: {
+                "content-type":
+                  "application/json; charset=UTF-8"
+              }
+            }
+          );
+        }
 
         /*
          * ========================================================
@@ -108,7 +194,8 @@ export default {
         if (
           !vendor ||
           !name ||
-          !address
+          !address ||
+          !customerPhone
         ) {
           return new Response(
             JSON.stringify({
@@ -219,6 +306,9 @@ export default {
 
           name:
             name,
+
+          customer_phone:
+            customerPhone,
 
           address:
             address,
@@ -353,9 +443,11 @@ export default {
               : "55" + sellerPhone;
 
           const whatsappMessage =
-            `Olá, sou ${name}. ` +
-            `Quero saber mais sobre ${productSearched}. ` +
-            `Meu endereço é ${address}.`;
+            `Nome: ${name}\n` +
+            `Telefone: ${formatPhone(customerPhone)}\n` +
+            `Endereço: ${address}\n` +
+            `Possui Claro? ${hasClaro || "Não informado"}\n` +
+            `Produto Pesquisado: ${productSearched}`;
 
           whatsappUrl =
             "https://wa.me/" +
@@ -590,7 +682,29 @@ button:disabled {
       <input
         id="nome"
         required
+        autocomplete="name"
         placeholder="Digite seu nome"
+      >
+
+      <!-- TELEFONE — NOVO CAMPO -->
+      <!-- Aproximadamente linha 390 -->
+
+      <label>
+        Telefone
+        <span class="required">*</span>
+      </label>
+
+      <input
+        id="telefone"
+        type="tel"
+        inputmode="numeric"
+        autocomplete="off"
+        autocorrect="off"
+        autocapitalize="off"
+        spellcheck="false"
+        maxlength="18"
+        required
+        placeholder="(   ) 99999-9999"
       >
 
       <label>
@@ -601,6 +715,7 @@ button:disabled {
       <input
         id="endereco"
         required
+        autocomplete="street-address"
         placeholder="Rua, número e bairro"
       >
 
@@ -740,6 +855,11 @@ const vendedorInput =
     "vendedor"
   );
 
+const telefoneInput =
+  document.getElementById(
+    "telefone"
+  );
+
 const form =
   document.getElementById(
     "leadForm"
@@ -768,6 +888,92 @@ if (
 
 }
 
+/*
+ * ==============================================================
+ * PHONE MASK
+ * Aproximadamente linhas 500-540
+ * ==============================================================
+ */
+
+telefoneInput.addEventListener(
+  "input",
+  function() {
+
+    let digits =
+      this.value.replace(
+        /\D/g,
+        ""
+      );
+
+    /*
+     * Se o navegador inserir +55,
+     * remove somente o código do país.
+     */
+    if (
+      digits.length > 11 &&
+      digits.startsWith("55")
+    ) {
+      digits =
+        digits.substring(2);
+    }
+
+    /*
+     * Limita a 11 dígitos.
+     */
+    digits =
+      digits.substring(
+        0,
+        11
+      );
+
+    if (
+      digits.length <= 8
+    ) {
+
+      this.value =
+        digits;
+
+      return;
+
+    }
+
+    if (
+      digits.length === 9
+    ) {
+
+      this.value =
+        digits.replace(
+          /^(\d{5})(\d{4})$/,
+          "$1-$2"
+        );
+
+      return;
+
+    }
+
+    if (
+      digits.length === 10
+    ) {
+
+      this.value =
+        digits.replace(
+          /^(\d{2})(\d{4})(\d{4})$/,
+          "($1) $2-$3"
+        );
+
+      return;
+
+    }
+
+    this.value =
+      digits.replace(
+        /^(\d{2})(\d{5})(\d{4})$/,
+        "($1) $2-$3"
+      );
+
+  }
+);
+
 form.addEventListener(
   "submit",
   async function(event) {
@@ -788,6 +994,43 @@ form.addEventListener(
 
     }
 
+    /*
+     * ==========================================================
+     * NORMALIZE CUSTOMER PHONE
+     * ==========================================================
+     */
+
+    let customerPhone =
+      telefoneInput.value.replace(
+        /\D/g,
+        ""
+      );
+
+    if (
+      customerPhone.length > 11 &&
+      customerPhone.startsWith("55")
+    ) {
+
+      customerPhone =
+        customerPhone.substring(2);
+
+    }
+
+    if (
+      customerPhone.length < 8 ||
+      customerPhone.length > 11
+    ) {
+
+      alert(
+        "Digite um telefone válido com 8 a 11 dígitos."
+      );
+
+      telefoneInput.focus();
+
+      return;
+
+    }
+
     const payload = {
 
       vendor:
@@ -798,6 +1041,9 @@ form.addEventListener(
           .getElementById("nome")
           .value
           .trim(),
+
+      customer_phone:
+        customerPhone,
 
       address:
         document
@@ -820,6 +1066,7 @@ form.addEventListener(
     if (
       !payload.vendor ||
       !payload.name ||
+      !payload.customer_phone ||
       !payload.address ||
       !payload.product_searched
     ) {
@@ -885,14 +1132,25 @@ form.addEventListener(
 
       }
 
-      alert(
-        "Lead registrado com sucesso!"
-      );
+      /*
+       * ========================================================
+       * LEAD JÁ FOI SALVO
+       * Agora limpamos o formulário antes do WhatsApp.
+       * ========================================================
+       */
+
+      form.reset();
+
+      vendedorInput.value =
+        vendedor;
+
+      sellerElement.textContent =
+        vendedores[vendedor];
 
       /*
-       * ==========================================================
+       * ========================================================
        * OPEN SELLER WHATSAPP
-       * ==========================================================
+       * ========================================================
        */
 
       if (
@@ -904,13 +1162,9 @@ form.addEventListener(
 
       } else {
 
-        form.reset();
-
-        vendedorInput.value =
-          vendedor;
-
-        sellerElement.textContent =
-          vendedores[vendedor];
+        alert(
+          "Lead registrado com sucesso!"
+        );
 
       }
 
