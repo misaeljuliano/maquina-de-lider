@@ -157,7 +157,16 @@ export default {
           );
         }
 
-        const savedLead = await insertResponse.json();
+        const responseText = await insertResponse.text();
+let savedLead = [];
+
+if (responseText.trim()) {
+  try {
+    savedLead = JSON.parse(responseText);
+  } catch {
+    savedLead = [];
+  }
+}
 
         /*
          * Resposta de sucesso
