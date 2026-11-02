@@ -2,82 +2,125 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
 
-    const supabaseUrl = env.SUPABASE_URL;
-    const serviceKey = env.SUPABASE_SERVICE_ROLE_KEY;
+    /*
+     * ============================================================
+     * SUPABASE CONFIGURATION
+     * ============================================================
+     *
+     * A URL do projeto não é segredo e fica fixa no Worker.
+     *
+     * A SERVICE ROLE KEY continua sendo obtida do Secret
+     * SUPABASE_SERVICE_ROLE_KEY configurado no Cloudflare.
+     */
+
+    const supabaseUrl =
+      "https://xmipdjjdtruutcumhrzb.supabase.co";
+
+    const serviceKey =
+      env.SUPABASE_SERVICE_ROLE_KEY;
 
     /*
      * ============================================================
      * POST - RECEIVE AND SAVE LEAD
      * ============================================================
      */
+
     if (request.method === "POST") {
       try {
         /*
-         * Validate Supabase configuration
+         * Validate Supabase service key
          */
-        if (!supabaseUrl) {
-          return new Response(
-            JSON.stringify({
-              success: false,
-              error: "SUPABASE_URL não configurada no Worker."
-            }),
-            {
-              status: 500,
-              headers: {
-                "content-type": "application/json; charset=UTF-8"
-              }
-            }
-          );
-        }
 
         if (!serviceKey) {
           return new Response(
             JSON.stringify({
               success: false,
-              error: "SUPABASE_SERVICE_ROLE_KEY não configurada no Worker."
+              error:
+                "SUPABASE_SERVICE_ROLE_KEY não configurada no Worker."
             }),
             {
               status: 500,
               headers: {
-                "content-type": "application/json; charset=UTF-8"
+                "content-type":
+                  "application/json; charset=UTF-8"
               }
             }
           );
         }
 
-        const data = await request.json();
+        /*
+         * ========================================================
+         * READ REQUEST
+         * ========================================================
+         */
 
-        const vendor = String(data.vendor || "").trim();
-        const name = String(data.name || "").trim();
-        const address = String(data.address || "").trim();
-        const hasClaro = String(data.hasClaro || "").trim();
-        const interestRaw = String(data.interest || "").trim();
+        const data =
+          await request.json();
+
+        const vendor =
+          String(
+            data.vendor || ""
+          ).trim();
+
+        const name =
+          String(
+            data.name || ""
+          ).trim();
+
+        const address =
+          String(
+            data.address || ""
+          ).trim();
+
+        const hasClaro =
+          String(
+            data.hasClaro || ""
+          ).trim();
+
+        const interestRaw =
+          String(
+            data.interest || ""
+          ).trim();
 
         /*
-         * Convert form values to database enum values
+         * ========================================================
+         * CONVERT FORM VALUES TO DATABASE ENUM VALUES
+         * ========================================================
          */
+
         const interest =
           interestRaw === "Agora"
             ? "AGORA"
             : interestRaw === "Depois"
               ? "DEPOIS"
-              : interestRaw === "Só quero consultar"
+              : interestRaw ===
+                  "Só quero consultar"
                 ? "CONSULTA"
                 : "";
 
         /*
-         * Validate required fields
+         * ========================================================
+         * VALIDATE REQUIRED FIELDS
+         * ========================================================
          */
-        if (!vendor || !name || !address || !interest) {
+
+        if (
+          !vendor ||
+          !name ||
+          !address ||
+          !interest
+        ) {
           return new Response(
             JSON.stringify({
               success: false,
-              error: "Preencha todos os campos obrigatórios."
+              error:
+                "Preencha todos os campos obrigatórios."
             }),
             {
               status: 400,
               headers: {
-                "content-type": "application/json; charset=UTF-8"
+                "content-type":
+                  "application/json; charset=UTF-8"
               }
             }
           );
@@ -95,19 +138,23 @@ export default {
           encodeURIComponent(vendor) +
           "&active=eq.true&select=id,slug,name,region,phone";
 
-        const sellerResponse = await fetch(
-          sellerUrl,
-          {
-            method: "GET",
-            headers: {
-              apikey: serviceKey,
-              Authorization: "Bearer " + serviceKey
+        const sellerResponse =
+          await fetch(
+            sellerUrl,
+            {
+              method: "GET",
+              headers: {
+                apikey: serviceKey,
+                Authorization:
+                  "Bearer " +
+                  serviceKey
+              }
             }
-          }
-        );
+          );
 
         if (!sellerResponse.ok) {
-          const sellerError = await sellerResponse.text();
+          const sellerError =
+            await sellerResponse.text();
 
           console.error(
             "Error querying seller:",
@@ -117,36 +164,46 @@ export default {
           return new Response(
             JSON.stringify({
               success: false,
-              error: "Não foi possível validar o vendedor.",
-              details: sellerError
+              error:
+                "Não foi possível validar o vendedor.",
+              details:
+                sellerError
             }),
             {
               status: 500,
               headers: {
-                "content-type": "application/json; charset=UTF-8"
+                "content-type":
+                  "application/json; charset=UTF-8"
               }
             }
           );
         }
 
-        const sellers = await sellerResponse.json();
+        const sellers =
+          await sellerResponse.json();
 
-        if (!Array.isArray(sellers) || sellers.length === 0) {
+        if (
+          !Array.isArray(sellers) ||
+          sellers.length === 0
+        ) {
           return new Response(
             JSON.stringify({
               success: false,
-              error: "Vendedor não encontrado ou inativo."
+              error:
+                "Vendedor não encontrado ou inativo."
             }),
             {
               status: 404,
               headers: {
-                "content-type": "application/json; charset=UTF-8"
+                "content-type":
+                  "application/json; charset=UTF-8"
               }
             }
           );
         }
 
-        const seller = sellers[0];
+        const seller =
+          sellers[0];
 
         /*
          * ========================================================
@@ -168,15 +225,33 @@ export default {
          */
 
         const lead = {
-          seller_id: seller.id,
-          region: seller.region,
-          name: name,
-          address: address,
-          has_claro: hasClaro || "Não informado",
-          interest: interest,
-          temperature: temperature,
-          status: "NOVO",
-          submission_id: crypto.randomUUID()
+          seller_id:
+            seller.id,
+
+          region:
+            seller.region,
+
+          name:
+            name,
+
+          address:
+            address,
+
+          has_claro:
+            hasClaro ||
+            "Não informado",
+
+          interest:
+            interest,
+
+          temperature:
+            temperature,
+
+          status:
+            "NOVO",
+
+          submission_id:
+            crypto.randomUUID()
         };
 
         /*
@@ -185,21 +260,43 @@ export default {
          * ========================================================
          */
 
-        const insertResponse = await fetch(
-          supabaseUrl + "/rest/v1/leads",
-          {
-            method: "POST",
-            headers: {
-              apikey: serviceKey,
-              Authorization: "Bearer " + serviceKey,
-              "Content-Type": "application/json",
-              Prefer: "return=representation"
-            },
-            body: JSON.stringify(lead)
-          }
-        );
+        const insertResponse =
+          await fetch(
+            supabaseUrl +
+              "/rest/v1/leads",
+            {
+              method: "POST",
 
-        const responseText = await insertResponse.text();
+              headers: {
+                apikey:
+                  serviceKey,
+
+                Authorization:
+                  "Bearer " +
+                  serviceKey,
+
+                "Content-Type":
+                  "application/json",
+
+                Prefer:
+                  "return=representation"
+              },
+
+              body:
+                JSON.stringify(
+                  lead
+                )
+            }
+          );
+
+        const responseText =
+          await insertResponse.text();
+
+        /*
+         * ========================================================
+         * HANDLE INSERT ERROR
+         * ========================================================
+         */
 
         if (!insertResponse.ok) {
           console.error(
@@ -210,26 +307,37 @@ export default {
           return new Response(
             JSON.stringify({
               success: false,
-              error: "Erro ao gravar lead.",
-              details: responseText
+              error:
+                "Erro ao gravar lead.",
+              details:
+                responseText
             }),
             {
               status: 500,
               headers: {
-                "content-type": "application/json; charset=UTF-8"
+                "content-type":
+                  "application/json; charset=UTF-8"
               }
             }
           );
         }
 
         /*
-         * Parse Supabase response
+         * ========================================================
+         * PARSE SUPABASE RESPONSE
+         * ========================================================
          */
+
         let savedLead = [];
 
-        if (responseText.trim()) {
+        if (
+          responseText.trim()
+        ) {
           try {
-            savedLead = JSON.parse(responseText);
+            savedLead =
+              JSON.parse(
+                responseText
+              );
           } catch (parseError) {
             console.error(
               "Could not parse Supabase response:",
@@ -246,24 +354,37 @@ export default {
 
         return new Response(
           JSON.stringify({
-            success: true,
+            success:
+              true,
+
             lead_id:
-              Array.isArray(savedLead) &&
+              Array.isArray(
+                savedLead
+              ) &&
               savedLead[0] &&
               savedLead[0].id
                 ? savedLead[0].id
                 : null,
-            seller: seller.name
+
+            seller:
+              seller.name
           }),
           {
             status: 200,
             headers: {
-              "content-type": "application/json; charset=UTF-8"
+              "content-type":
+                "application/json; charset=UTF-8"
             }
           }
         );
 
       } catch (error) {
+        /*
+         * ========================================================
+         * INTERNAL ERROR
+         * ========================================================
+         */
+
         console.error(
           "Internal error:",
           error
@@ -271,18 +392,25 @@ export default {
 
         return new Response(
           JSON.stringify({
-            success: false,
-            error: "Erro interno.",
-            details: String(
-              error && error.message
-                ? error.message
-                : error
-            )
+            success:
+              false,
+
+            error:
+              "Erro interno.",
+
+            details:
+              String(
+                error &&
+                error.message
+                  ? error.message
+                  : error
+              )
           }),
           {
             status: 500,
             headers: {
-              "content-type": "application/json; charset=UTF-8"
+              "content-type":
+                "application/json; charset=UTF-8"
             }
           }
         );
@@ -301,6 +429,7 @@ export default {
 <html lang="pt-BR">
 
 <head>
+
 <meta charset="UTF-8">
 
 <meta
@@ -398,6 +527,7 @@ button:disabled {
 }
 
 </style>
+
 </head>
 
 <body>
@@ -406,15 +536,22 @@ button:disabled {
 
   <div class="card">
 
-    <h1>Máquina de Líder</h1>
+    <h1>
+      Máquina de Líder
+    </h1>
 
     <div class="subtitle">
       Atendimento Claro
     </div>
 
     <div class="seller">
+
       Vendedor:
-      <strong id="seller">Identificando...</strong>
+
+      <strong id="seller">
+        Identificando...
+      </strong>
+
     </div>
 
     <form id="leadForm">
@@ -426,7 +563,8 @@ button:disabled {
       >
 
       <label>
-        Nome <span class="required">*</span>
+        Nome
+        <span class="required">*</span>
       </label>
 
       <input
@@ -436,7 +574,8 @@ button:disabled {
       >
 
       <label>
-        Endereço <span class="required">*</span>
+        Endereço
+        <span class="required">*</span>
       </label>
 
       <input
@@ -451,25 +590,59 @@ button:disabled {
 
       <select id="claro">
 
-        <option value="">Selecione</option>
-        <option value="Não">Não</option>
-        <option value="Internet">Internet</option>
-        <option value="Celular">Celular</option>
-        <option value="TV">TV</option>
-        <option value="Combo">Combo</option>
+        <option value="">
+          Selecione
+        </option>
+
+        <option value="Não">
+          Não
+        </option>
+
+        <option value="Internet">
+          Internet
+        </option>
+
+        <option value="Celular">
+          Celular
+        </option>
+
+        <option value="TV">
+          TV
+        </option>
+
+        <option value="Combo">
+          Combo
+        </option>
 
       </select>
 
       <label>
+
         Qual seu interesse?
-        <span class="required">*</span>
+
+        <span class="required">
+          *
+        </span>
+
       </label>
 
-      <select id="interesse" required>
+      <select
+        id="interesse"
+        required
+      >
 
-        <option value="">Selecione</option>
-        <option value="Agora">Agora</option>
-        <option value="Depois">Depois</option>
+        <option value="">
+          Selecione
+        </option>
+
+        <option value="Agora">
+          Agora
+        </option>
+
+        <option value="Depois">
+          Depois
+        </option>
+
         <option value="Só quero consultar">
           Só quero consultar
         </option>
@@ -492,16 +665,37 @@ button:disabled {
 <script>
 
 const vendedores = {
-  "josi-misael": "Josi Misael",
-  "mauricio-fuertes": "Maurício Fuertes",
-  "monique-gomes": "Monique Gomes",
-  "juliana-da-silva": "Juliana Da Silva",
-  "marcela-cristina": "Marcela Cristina",
-  "sandra-da-silva": "Sandra da Silva",
-  "patricia-goncalves": "Patrícia Gonçalves",
-  "janelle": "Janelle",
-  "ana-paula": "Ana Paula",
-  "guilherme-santos": "Guilherme Santos"
+
+  "josi-misael":
+    "Josi Misael",
+
+  "mauricio-fuertes":
+    "Maurício Fuertes",
+
+  "monique-gomes":
+    "Monique Gomes",
+
+  "juliana-da-silva":
+    "Juliana Da Silva",
+
+  "marcela-cristina":
+    "Marcela Cristina",
+
+  "sandra-da-silva":
+    "Sandra da Silva",
+
+  "patricia-goncalves":
+    "Patrícia Gonçalves",
+
+  "janelle":
+    "Janelle",
+
+  "ana-paula":
+    "Ana Paula",
+
+  "guilherme-santos":
+    "Guilherme Santos"
+
 };
 
 const params =
@@ -513,16 +707,24 @@ const vendedor =
   params.get("vendedor");
 
 const sellerElement =
-  document.getElementById("seller");
+  document.getElementById(
+    "seller"
+  );
 
 const vendedorInput =
-  document.getElementById("vendedor");
+  document.getElementById(
+    "vendedor"
+  );
 
 const form =
-  document.getElementById("leadForm");
+  document.getElementById(
+    "leadForm"
+  );
 
 const submitButton =
-  document.getElementById("submitButton");
+  document.getElementById(
+    "submitButton"
+  );
 
 if (
   vendedor &&
@@ -559,6 +761,7 @@ form.addEventListener(
       );
 
       return;
+
     }
 
     const payload = {
@@ -602,9 +805,11 @@ form.addEventListener(
       );
 
       return;
+
     }
 
-    submitButton.disabled = true;
+    submitButton.disabled =
+      true;
 
     submitButton.textContent =
       "Registrando...";
@@ -615,7 +820,8 @@ form.addEventListener(
         await fetch(
           window.location.pathname,
           {
-            method: "POST",
+            method:
+              "POST",
 
             headers: {
               "Content-Type":
@@ -623,7 +829,9 @@ form.addEventListener(
             },
 
             body:
-              JSON.stringify(payload)
+              JSON.stringify(
+                payload
+              )
           }
         );
 
@@ -636,12 +844,19 @@ form.addEventListener(
       ) {
 
         throw new Error(
+
           result.details
-            ? (result.error || "Erro") +
+
+            ? (
+                result.error ||
+                "Erro"
+              ) +
               ": " +
               result.details
+
             : result.error ||
               "Erro ao gravar lead."
+
         );
 
       }
@@ -686,13 +901,16 @@ form.addEventListener(
 </script>
 
 </body>
+
 </html>`,
         {
           status: 200,
+
           headers: {
             "content-type":
               "text/html; charset=UTF-8"
           }
+
         }
       );
     }
@@ -707,11 +925,13 @@ form.addEventListener(
       "Método não permitido.",
       {
         status: 405,
+
         headers: {
           "content-type":
             "text/plain; charset=UTF-8"
         }
       }
     );
+
   }
 };
