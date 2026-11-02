@@ -2,58 +2,108 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
 
-    const supabaseUrl =
-      "https://xmipdjjdtruutcumhrzb.supabase.co";
+    // ============================================================
+    // CONFIGURAÇÃO SUPABASE
+    // ============================================================
 
-    const serviceKey =
-      env.SUPABASE_SERVICE_ROLE_KEY;
+    const supabaseUrl = "https://xmipdjjdtruutcumhrzb.supabase.co";
+    const serviceKey = env.SUPABASE_SERVICE_ROLE_KEY;
+
+    if (!serviceKey) {
+      return new Response(
+        "SUPABASE_SERVICE_ROLE_KEY não configurada no Worker.",
+        { status: 500 }
+      );
+    }
+
+    // ============================================================
+    // FUNÇÕES AUXILIARES
+    // ============================================================
+
+    function jsonResponse(data, status = 200) {
+      return new Response(JSON.stringify(data), {
+        status,
+        headers: {
+          "Content-Type": "application/json; charset=utf-8"
+        }
+      });
+    }
+
+    function normalizePhone(value) {
+      return String(value || "").replace(/\D/g, "");
+    }
+
+    function formatPhone(phone) {
+      const digits = normalizePhone(phone);
+
+      // 11 dígitos: DDD + celular
+      if (digits.length === 11) {
+        return (
+          "(" +
+          digits.substring(0, 2) +
+          ") " +
+          digits.substring(2, 7) +
+          "-" +
+          digits.substring(7)
+        );
+      }
+
+      // 10 dígitos: DDD + telefone fixo
+      if (digits.length === 10) {
+        return (
+          "(" +
+          digits.substring(0, 2) +
+          ") " +
+          digits.substring(2, 6) +
+          "-" +
+          digits.substring(6)
+        );
+      }
+
+      // 9 dígitos: celular sem DDD
+      if (digits.length === 9) {
+        return (
+          digits.substring(0, 5) +
+          "-" +
+          digits.substring(5)
+        );
+      }
+
+      // 8 dígitos: telefone sem DDD
+      if (digits.length === 8) {
+        return (
+          digits.substring(0, 4) +
+          "-" +
+          digits.substring(4)
+        );
+      }
+
+      return digits;
+    }
+
+    // ============================================================
+    // POST — REGISTRO DO LEAD
+    // ============================================================
 
     if (request.method === "POST") {
       try {
-        if (!serviceKey) {
-          return new Response(
-            JSON.stringify({
-              success: false,
-              error:
-                "SUPABASE_SERVICE_ROLE_KEY não configurada no Worker."
-            }),
-            {
-              status: 500,
-              headers: {
-                "content-type":
-                  "application/json; charset=UTF-8"
-              }
-            }
-          );
-        }
+        const body = await request.json();
 
-        const data =
-          await request.json();
+        const vendedor = String(body.vendedor || "").trim();
+        const name = String(body.name || "").trim();
+        const address = String(body.address || "").trim();
+        const hasClaro = String(body.has_claro || "").trim();
+        const productSearched = String(
+          body.product_searched || ""
+        ).trim();
 
-        const vendor =
-          String(data.vendor || "").trim();
-
-        const name =
-          String(data.name || "").trim();
-
-        const address =
-          String(data.address || "").trim();
-
-        const hasClaro =
-          String(data.hasClaro || "").trim();
-
-        const productSearched =
-          String(
-            data.product_searched || ""
-          ).trim();
-
-        // Normaliza o telefone:
-        // remove espaços, parênteses, hífens e qualquer
-        // caractere que não seja número.
-        const customerPhone =
-          String(
-            data.customer_phone || ""
-          ).replace(/\D/g, "");
+        // Normaliza telefone:
+        // (13) 99120-9630 -> 13991209630
+        // 13 99120-9630   -> 13991209630
+        // 99120-9630      -> 991209630
+        const customerPhone = normalizePhone(
+          body.customer_phone
+        );
 
         const validProducts = [
           "Internet",
@@ -62,982 +112,650 @@ export default {
           "Combo"
         ];
 
-        if (
-          !validProducts.includes(
-            productSearched
-          )
-        ) {
-          return new Response(
-            JSON.stringify({
-              success: false,
-              error:
-                "Selecione o produto pesquisado."
-            }),
-            {
-              status: 400,
-              headers: {
-                "content-type":
-                  "application/json; charset=UTF-8"
-              }
-            }
+        // ========================================================
+        // VALIDAÇÕES
+        // ========================================================
+
+        if (!vendedor) {
+          return jsonResponse(
+            { error: "Vendedor não informado." },
+            400
           );
         }
 
-        if (
-          !vendor ||
-          !name ||
-          !address ||
-          !customerPhone
-        ) {
-          return new Response(
-            JSON.stringify({
-              success: false,
-              error:
-                "Preencha todos os campos obrigatórios."
-            }),
-            {
-              status: 400,
-              headers: {
-                "content-type":
-                  "application/json; charset=UTF-8"
-              }
-            }
+        if (!name) {
+          return jsonResponse(
+            { error: "Nome não informado." },
+            400
           );
         }
 
-        // Aceita telefone com ou sem DDD.
-        // Não completa DDD automaticamente.
+        if (!address) {
+          return jsonResponse(
+            { error: "Endereço não informado." },
+            400
+          );
+        }
+
+        if (!customerPhone) {
+          return jsonResponse(
+            { error: "Telefone não informado." },
+            400
+          );
+        }
+
+        // Aceita:
+        // 8 ou 9 dígitos sem DDD
+        // 10 ou 11 dígitos com DDD
         if (
           customerPhone.length < 8 ||
           customerPhone.length > 11
         ) {
-          return new Response(
-            JSON.stringify({
-              success: false,
-              error:
-                "Digite um telefone válido com ou sem DDD."
-            }),
+          return jsonResponse(
             {
-              status: 400,
-              headers: {
-                "content-type":
-                  "application/json; charset=UTF-8"
-              }
-            }
+              error:
+                "Telefone inválido. Informe de 8 a 11 dígitos."
+            },
+            400
           );
         }
 
-        const sellerUrl =
-          supabaseUrl +
-          "/rest/v1/sellers?slug=eq." +
-          encodeURIComponent(vendor) +
-          "&active=eq.true&select=id,slug,name,region,phone";
-
-        const sellerResponse =
-          await fetch(
-            sellerUrl,
-            {
-              method: "GET",
-              headers: {
-                apikey: serviceKey,
-                Authorization:
-                  "Bearer " + serviceKey
-              }
-            }
+        if (!validProducts.includes(productSearched)) {
+          return jsonResponse(
+            { error: "Produto pesquisado inválido." },
+            400
           );
+        }
+
+        // ========================================================
+        // BUSCA VENDEDOR
+        // ========================================================
+
+        const sellerResponse = await fetch(
+          `${supabaseUrl}/rest/v1/sellers?slug=eq.${encodeURIComponent(
+            vendedor
+          )}&active=eq.true&select=*`,
+          {
+            headers: {
+              apikey: serviceKey,
+              Authorization: `Bearer ${serviceKey}`
+            }
+          }
+        );
 
         if (!sellerResponse.ok) {
-          const sellerError =
-            await sellerResponse.text();
-
-          console.error(
-            "Error querying seller:",
-            sellerError
-          );
-
-          return new Response(
-            JSON.stringify({
-              success: false,
-              error:
-                "Não foi possível validar o vendedor.",
-              details:
-                sellerError
-            }),
-            {
-              status: 500,
-              headers: {
-                "content-type":
-                  "application/json; charset=UTF-8"
-              }
-            }
+          return jsonResponse(
+            { error: "Erro ao consultar vendedor." },
+            500
           );
         }
 
-        const sellers =
-          await sellerResponse.json();
+        const sellers = await sellerResponse.json();
 
-        if (
-          !Array.isArray(sellers) ||
-          sellers.length === 0
-        ) {
-          return new Response(
-            JSON.stringify({
-              success: false,
-              error:
-                "Vendedor não encontrado ou inativo."
-            }),
-            {
-              status: 404,
-              headers: {
-                "content-type":
-                  "application/json; charset=UTF-8"
-              }
-            }
+        if (!sellers || sellers.length === 0) {
+          return jsonResponse(
+            { error: "Vendedor não encontrado ou inativo." },
+            404
           );
         }
 
-        const seller =
-          sellers[0];
+        const seller = sellers[0];
 
-        const lead = {
-          seller_id:
-            seller.id,
+        // ========================================================
+        // REGISTRA LEAD
+        // ========================================================
 
-          region:
-            seller.region,
-
-          name:
-            name,
-
-          address:
-            address,
-
-          has_claro:
-            hasClaro ||
-            "Não informado",
-
-          product_searched:
-            productSearched,
-
-          customer_phone:
-            customerPhone,
-
-          status:
-            "NOVO",
-
-          submission_id:
-            crypto.randomUUID()
+        const leadPayload = {
+          seller_id: seller.id,
+          seller_slug: seller.slug,
+          seller_name: seller.name,
+          region: seller.region,
+          customer_name: name,
+          customer_phone: customerPhone,
+          address: address,
+          has_claro: hasClaro || null,
+          product_searched: productSearched,
+          status: "NOVO"
         };
 
-        const insertResponse =
-          await fetch(
-            supabaseUrl +
-              "/rest/v1/leads",
-            {
-              method: "POST",
-
-              headers: {
-                apikey:
-                  serviceKey,
-
-                Authorization:
-                  "Bearer " +
-                  serviceKey,
-
-                "Content-Type":
-                  "application/json",
-
-                Prefer:
-                  "return=representation"
-              },
-
-              body:
-                JSON.stringify(
-                  lead
-                )
-            }
-          );
-
-        const responseText =
-          await insertResponse.text();
-
-        if (!insertResponse.ok) {
-          console.error(
-            "Supabase lead insert error:",
-            responseText
-          );
-
-          return new Response(
-            JSON.stringify({
-              success: false,
-              error:
-                "Erro ao gravar lead.",
-              details:
-                responseText
-            }),
-            {
-              status: 500,
-              headers: {
-                "content-type":
-                  "application/json; charset=UTF-8"
-              }
-            }
-          );
-        }
-
-        let savedLead = [];
-
-        if (
-          responseText.trim()
-        ) {
-          try {
-            savedLead =
-              JSON.parse(
-                responseText
-              );
-          } catch (parseError) {
-            console.error(
-              "Could not parse Supabase response:",
-              parseError
-            );
-          }
-        }
-
-        const sellerPhone =
-          String(
-            seller.phone || ""
-          ).replace(
-            /\D/g,
-            ""
-          );
-
-        let whatsappUrl =
-          "";
-
-        // Só abre o WhatsApp do vendedor quando
-        // o número do vendedor estiver completo.
-        if (sellerPhone) {
-          const whatsappPhone =
-            sellerPhone.startsWith("55")
-              ? sellerPhone
-              : "55" + sellerPhone;
-
-          const formattedCustomerPhone =
-            customerPhone.length === 11
-              ? "(" +
-                customerPhone.substring(0, 2) +
-                ") " +
-                customerPhone.substring(2, 7) +
-                "-" +
-                customerPhone.substring(7)
-              : customerPhone;
-
-          const whatsappMessage =
-            `Nome: ${name}\n` +
-            `Telefone: ${formattedCustomerPhone}\n` +
-            `Endereço: ${address}\n` +
-            `Possui Claro? ${hasClaro || "Não informado"}\n` +
-            `Produto Pesquisado: ${productSearched}`;
-
-          whatsappUrl =
-            "https://wa.me/" +
-            whatsappPhone +
-            "?text=" +
-            encodeURIComponent(
-              whatsappMessage
-            );
-        }
-
-        return new Response(
-          JSON.stringify({
-            success:
-              true,
-
-            lead_id:
-              Array.isArray(
-                savedLead
-              ) &&
-              savedLead[0] &&
-              savedLead[0].id
-                ? savedLead[0].id
-                : null,
-
-            seller:
-              seller.name,
-
-            whatsapp_url:
-              whatsappUrl
-          }),
+        const leadResponse = await fetch(
+          `${supabaseUrl}/rest/v1/leads`,
           {
-            status: 200,
+            method: "POST",
             headers: {
-              "content-type":
-                "application/json; charset=UTF-8"
-            }
+              apikey: serviceKey,
+              Authorization: `Bearer ${serviceKey}`,
+              "Content-Type": "application/json",
+              Prefer: "return=representation"
+            },
+            body: JSON.stringify(leadPayload)
           }
         );
 
+        if (!leadResponse.ok) {
+          const errorText = await leadResponse.text();
+
+          return jsonResponse(
+            {
+              error: "Erro ao registrar lead.",
+              details: errorText
+            },
+            500
+          );
+        }
+
+        // ========================================================
+        // WHATSAPP DO VENDEDOR
+        // ========================================================
+
+        const sellerPhone = normalizePhone(
+          seller.phone
+        );
+
+        if (!sellerPhone) {
+          return jsonResponse({
+            success: true,
+            message: "Lead registrado com sucesso!",
+            whatsapp_url: null
+          });
+        }
+
+        const formattedCustomerPhone =
+          formatPhone(customerPhone);
+
+        const whatsappMessage =
+`Nome: ${name}
+Telefone: ${formattedCustomerPhone}
+Endereço: ${address}
+Possui Claro? ${hasClaro || "Não informado"}
+Produto Pesquisado: ${productSearched}`;
+
+        const whatsappUrl =
+          `https://wa.me/${sellerPhone}?text=${encodeURIComponent(
+            whatsappMessage
+          )}`;
+
+        // ========================================================
+        // RETORNO
+        // ========================================================
+
+        return jsonResponse({
+          success: true,
+          message: "Lead registrado com sucesso!",
+          whatsapp_url: whatsappUrl
+        });
       } catch (error) {
-        console.error(
-          "Internal error:",
-          error
-        );
-
-        return new Response(
-          JSON.stringify({
-            success:
-              false,
-
-            error:
-              "Erro interno.",
-
-            details:
-              String(
-                error &&
-                error.message
-                  ? error.message
-                  : error
-              )
-          }),
+        return jsonResponse(
           {
-            status: 500,
-            headers: {
-              "content-type":
-                "application/json; charset=UTF-8"
-            }
-          }
+            error: "Erro interno.",
+            details: error.message
+          },
+          500
         );
       }
     }
 
-    if (request.method === "GET") {
-      return new Response(
-        `<!DOCTYPE html>
+    // ============================================================
+    // GET — PÁGINA DO VENDEDOR
+    // ============================================================
+
+    const vendedor = url.searchParams.get("vendedor") || "";
+
+    return new Response(
+      `<!DOCTYPE html>
 <html lang="pt-BR">
-
 <head>
+  <meta charset="UTF-8">
+  <meta
+    name="viewport"
+    content="width=device-width, initial-scale=1.0"
+  >
 
-<meta charset="UTF-8">
+  <title>Claro | Porta a Porta</title>
 
-<meta
-  name="viewport"
-  content="width=device-width, initial-scale=1.0"
->
+  <style>
+    * {
+      box-sizing: border-box;
+    }
 
-<title>Claro | Porta a Porta</title>
+    body {
+      margin: 0;
+      padding: 0;
+      background: #f5f5f5;
+      font-family: Arial, Helvetica, sans-serif;
+      color: #222;
+    }
 
-<style>
+    .container {
+      width: 100%;
+      max-width: 460px;
+      margin: 0 auto;
+      padding: 24px 18px 40px;
+    }
 
-* {
-  box-sizing: border-box;
-}
+    .header {
+      text-align: center;
+      margin-bottom: 28px;
+    }
 
-body {
-  margin: 0;
-  font-family: Arial, sans-serif;
-  background: #f5f5f5;
-  color: #222;
-}
+    .claro {
+      color: #e30613;
+      font-size: 38px;
+      font-weight: 800;
+      letter-spacing: -1px;
+    }
 
-.container {
-  width: 100%;
-  max-width: 480px;
-  margin: auto;
-  padding: 20px;
-}
+    .subtitle {
+      font-size: 17px;
+      font-weight: 600;
+      margin-top: 2px;
+      color: #333;
+    }
 
-.card {
-  background: white;
-  border-radius: 18px;
-  padding: 24px;
-  margin-top: 20px;
-  box-shadow: 0 4px 20px rgba(0,0,0,.10);
-}
+    .card {
+      background: #fff;
+      border-radius: 16px;
+      padding: 22px;
+      box-shadow: 0 4px 18px rgba(0,0,0,0.08);
+    }
 
-h1 {
-  margin: 0 0 8px;
-  font-size: 30px;
-  color: #e30613;
-}
+    label {
+      display: block;
+      margin-bottom: 7px;
+      font-size: 14px;
+      font-weight: 700;
+    }
 
-.subtitle {
-  color: #666;
-  margin-bottom: 24px;
-  font-size: 16px;
-}
+    .required {
+      color: #e30613;
+    }
 
-label {
-  display: block;
-  font-weight: bold;
-  margin-top: 18px;
-  margin-bottom: 7px;
-}
+    input,
+    select {
+      width: 100%;
+      height: 48px;
+      border: 1px solid #ccc;
+      border-radius: 9px;
+      padding: 0 13px;
+      font-size: 16px;
+      background: #fff;
+      outline: none;
+      margin-bottom: 17px;
+    }
 
-input,
-select {
-  width: 100%;
-  padding: 14px;
-  border: 1px solid #ccc;
-  border-radius: 10px;
-  font-size: 16px;
-  background: white;
-}
+    input:focus,
+    select:focus {
+      border-color: #e30613;
+      box-shadow: 0 0 0 2px rgba(227,6,19,0.08);
+    }
 
-button {
-  width: 100%;
-  margin-top: 24px;
-  padding: 16px;
-  border: 0;
-  border-radius: 10px;
-  background: #e30613;
-  color: white;
-  font-size: 17px;
-  font-weight: bold;
-  cursor: pointer;
-}
+    .phone-input {
+      letter-spacing: 0.3px;
+    }
 
-button:active {
-  transform: scale(.99);
-}
+    button {
+      width: 100%;
+      height: 50px;
+      border: 0;
+      border-radius: 9px;
+      background: #e30613;
+      color: #fff;
+      font-size: 17px;
+      font-weight: 700;
+      cursor: pointer;
+    }
 
-button:disabled {
-  opacity: .6;
-}
+    button:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
 
-.seller {
-  background: #f0f0f0;
-  padding: 12px;
-  border-radius: 10px;
-  margin-bottom: 18px;
-  font-size: 14px;
-}
-
-.required {
-  color: #d00;
-}
-
-.phone-input {
-  letter-spacing: .3px;
-}
-
-</style>
-
+    .footer {
+      text-align: center;
+      margin-top: 18px;
+      color: #777;
+      font-size: 12px;
+    }
+  </style>
 </head>
 
 <body>
 
-<div class="container">
+  <div class="container">
 
-  <div class="card">
-
-    <h1>
-      Claro
-    </h1>
-
-    <div class="subtitle">
-      Porta a Porta
+    <div class="header">
+      <div class="claro">Claro</div>
+      <div class="subtitle">Porta a Porta</div>
     </div>
 
-    <div class="seller">
+    <div class="card">
 
-      Vendedor:
+      <form id="leadForm">
 
-      <strong id="seller">
-        Identificando...
-      </strong>
+        <label for="nome">
+          Nome
+          <span class="required">*</span>
+        </label>
+
+        <input
+          id="nome"
+          type="text"
+          required
+          autocomplete="name"
+          placeholder="Digite seu nome"
+        >
+
+        <label for="telefone">
+          Telefone
+          <span class="required">*</span>
+        </label>
+
+        <input
+          id="telefone"
+          class="phone-input"
+          type="tel"
+          required
+          inputmode="numeric"
+          autocomplete="tel"
+          placeholder="(   ) 99999-9999"
+          maxlength="15"
+        >
+
+        <label for="endereco">
+          Endereço
+          <span class="required">*</span>
+        </label>
+
+        <input
+          id="endereco"
+          type="text"
+          required
+          autocomplete="street-address"
+          placeholder="Digite seu endereço"
+        >
+
+        <label for="claro">
+          Você possui Claro?
+        </label>
+
+        <select id="claro">
+          <option value="">Selecione</option>
+          <option value="Não">Não</option>
+          <option value="Internet">Internet</option>
+          <option value="Celular">Celular</option>
+          <option value="TV">TV</option>
+          <option value="Combo">Combo</option>
+        </select>
+
+        <label for="produto">
+          Produto pesquisado
+          <span class="required">*</span>
+        </label>
+
+        <select id="produto" required>
+          <option value="">Selecione</option>
+          <option value="Internet">Internet</option>
+          <option value="Celular">Celular</option>
+          <option value="TV">TV</option>
+          <option value="Combo">Combo</option>
+        </select>
+
+        <button
+          id="submitButton"
+          type="submit"
+        >
+          Enviar
+        </button>
+
+      </form>
 
     </div>
 
-    <form id="leadForm">
-
-      <input
-        type="hidden"
-        id="vendedor"
-        name="vendedor"
-      >
-
-      <label>
-        Nome
-        <span class="required">*</span>
-      </label>
-
-      <input
-        id="nome"
-        required
-        placeholder="Digite seu nome"
-      >
-
-      <label>
-        Telefone
-        <span class="required">*</span>
-      </label>
-
-      <input
-        id="telefone"
-        class="phone-input"
-        type="tel"
-        required
-        inputmode="numeric"
-        autocomplete="tel"
-        placeholder="(   ) 99999-9999"
-        maxlength="15"
-      >
-
-      <label>
-        Endereço
-        <span class="required">*</span>
-      </label>
-
-      <input
-        id="endereco"
-        required
-        placeholder="Rua, número e bairro"
-      >
-
-      <label>
-        Você possui Claro?
-      </label>
-
-      <select id="claro">
-
-        <option value="">
-          Selecione
-        </option>
-
-        <option value="Não">
-          Não
-        </option>
-
-        <option value="Internet">
-          Internet
-        </option>
-
-        <option value="Celular">
-          Celular
-        </option>
-
-        <option value="TV">
-          TV
-        </option>
-
-        <option value="Combo">
-          Combo
-        </option>
-
-      </select>
-
-      <label>
-
-        Produto pesquisado
-
-        <span class="required">
-          *
-        </span>
-
-      </label>
-
-      <select
-        id="produto"
-        required
-      >
-
-        <option value="">
-          Selecione
-        </option>
-
-        <option value="Internet">
-          Internet
-        </option>
-
-        <option value="Celular">
-          Celular
-        </option>
-
-        <option value="TV">
-          TV
-        </option>
-
-        <option value="Combo">
-          Combo
-        </option>
-
-      </select>
-
-      <button
-        id="submitButton"
-        type="submit"
-      >
-        Enviar
-      </button>
-
-    </form>
+    <div class="footer">
+      Claro | Porta a Porta
+    </div>
 
   </div>
 
-</div>
-
 <script>
 
-const vendedores = {
-
-  "josi-misael":
-    "Josi Misael",
-
-  "mauricio-fuertes":
-    "Maurício Fuertes",
-
-  "monique-gomes":
-    "Monique Gomes",
-
-  "juliana-da-silva":
-    "Juliana Da Silva",
-
-  "marcela-cristina":
-    "Marcela Cristina",
-
-  "sandra-da-silva":
-    "Sandra da Silva",
-
-  "patricia-goncalves":
-    "Patrícia Gonçalves",
-
-  "janelle":
-    "Janelle",
-
-  "ana-paula":
-    "Ana Paula",
-
-  "guilherme-santos":
-    "Guilherme Santos"
-
-};
-
-const params =
-  new URLSearchParams(
-    window.location.search
-  );
-
-const vendedor =
-  params.get("vendedor");
-
-const sellerElement =
-  document.getElementById(
-    "seller"
-  );
-
-const vendedorInput =
-  document.getElementById(
-    "vendedor"
-  );
-
-const form =
-  document.getElementById(
-    "leadForm"
-  );
-
-const submitButton =
-  document.getElementById(
-    "submitButton"
-  );
-
-const telefoneInput =
-  document.getElementById(
-    "telefone"
-  );
-
-// Máscara visual.
-// O DDD é opcional e nunca é completado automaticamente.
-telefoneInput.addEventListener(
-  "input",
-  function() {
-
-    let value =
-      this.value.replace(
-        /\D/g,
-        ""
-      );
-
-    if (
-      value.length > 11
-    ) {
-      value =
-        value.substring(
-          0,
-          11
-        );
-    }
-
-    if (
-      value.length <= 8
-    ) {
-
-      this.value =
-        value;
-
-      return;
-
-    }
-
-    if (
-      value.length === 9
-    ) {
-
-      this.value =
-        value.substring(0, 5) +
-        "-" +
-        value.substring(5);
-
-      return;
-
-    }
-
-    this.value =
-      "(" +
-      value.substring(0, 2) +
-      ") " +
-      value.substring(2, 7) +
-      "-" +
-      value.substring(7);
-
-  }
-);
-
-if (
-  vendedor &&
-  vendedores[vendedor]
-) {
-
-  sellerElement.textContent =
-    vendedores[vendedor];
-
-  vendedorInput.value =
-    vendedor;
-
-} else {
-
-  sellerElement.textContent =
-    "Vendedor não identificado";
-
-}
-
-form.addEventListener(
-  "submit",
-  async function(event) {
-
-    event.preventDefault();
-
-    if (
-      !vendedor ||
-      !vendedores[vendedor]
-    ) {
-
-      alert(
-        "Vendedor não identificado. " +
-        "Utilize o QR Code correto."
-      );
-
-      return;
-
-    }
-
-    const rawPhone =
-      document
-        .getElementById("telefone")
-        .value
-        .replace(
-          /\D/g,
-          ""
-        );
-
-    const payload = {
-
-      vendor:
-        vendedorInput.value,
-
-      name:
-        document
-          .getElementById("nome")
-          .value
-          .trim(),
-
-      customer_phone:
-        rawPhone,
-
-      address:
-        document
-          .getElementById("endereco")
-          .value
-          .trim(),
-
-      hasClaro:
-        document
-          .getElementById("claro")
-          .value,
-
-      product_searched:
-        document
-          .getElementById("produto")
-          .value
-
-    };
-
-    if (
-      !payload.vendor ||
-      !payload.name ||
-      !payload.address ||
-      !payload.customer_phone ||
-      !payload.product_searched
-    ) {
-
-      alert(
-        "Preencha os campos obrigatórios."
-      );
-
-      return;
-
-    }
-
-    if (
-      payload.customer_phone.length < 8 ||
-      payload.customer_phone.length > 11
-    ) {
-
-      alert(
-        "Digite um telefone válido com ou sem DDD."
-      );
-
-      return;
-
-    }
-
-    submitButton.disabled =
-      true;
-
-    submitButton.textContent =
-      "Enviando...";
-
-    try {
-
-      const response =
-        await fetch(
-          window.location.pathname,
-          {
-            method:
-              "POST",
-
-            headers: {
-              "Content-Type":
-                "application/json"
-            },
-
-            body:
-              JSON.stringify(
-                payload
-              )
-          }
-        );
-
-      const result =
-        await response.json();
-
-      if (
-        !response.ok ||
-        !result.success
-      ) {
-
-        throw new Error(
-
-          result.details
-
-            ? (
-                result.error ||
-                "Erro"
-              ) +
-              ": " +
-              result.details
-
-            : result.error ||
-              "Erro ao gravar lead."
-
-        );
-
+  const telefoneInput =
+    document.getElementById("telefone");
+
+  // ============================================================
+  // MÁSCARA DO TELEFONE
+  //
+  // 8 dígitos:
+  // 9999-9999
+  //
+  // 9 dígitos:
+  // 99999-9999
+  //
+  // 10 dígitos:
+  // (13) 9999-9999
+  //
+  // 11 dígitos:
+  // (13) 99999-9999
+  //
+  // O DDD NÃO É COMPLETADO AUTOMATICAMENTE.
+  // ============================================================
+
+  telefoneInput.addEventListener(
+    "input",
+    function () {
+
+      let value =
+        this.value.replace(/\\D/g, "");
+
+      // Limite máximo: DDD + celular
+      if (value.length > 11) {
+        value = value.substring(0, 11);
       }
 
-      alert(
-        "Lead registrado com sucesso!"
-      );
+      // Sem DDD — telefone fixo
+      if (value.length <= 8) {
 
-      if (
-        result.whatsapp_url
-      ) {
-
-        window.location.href =
-          result.whatsapp_url;
-
-      } else {
-
-        form.reset();
-
-        vendedorInput.value =
-          vendedor;
-
-        sellerElement.textContent =
-          vendedores[vendedor];
-
-      }
-
-    } catch (error) {
-
-      console.error(
-        "Lead submission error:",
-        error
-      );
-
-      alert(
-        error.message ||
-        "Erro ao registrar lead."
-      );
-
-    } finally {
-
-      submitButton.disabled =
-        false;
-
-      submitButton.textContent =
-        "Enviar";
-
-    }
-
-  }
-);
-
-</script>
-
-</body>
-
-</html>`,
-        {
-          status: 200,
-
-          headers: {
-            "content-type":
-              "text/html; charset=UTF-8"
-          }
+        if (value.length <= 4) {
+          this.value = value;
+        } else {
+          this.value =
+            value.substring(0, 4) +
+            "-" +
+            value.substring(4);
         }
-      );
+
+        return;
+      }
+
+      // Sem DDD — celular
+      if (value.length === 9) {
+
+        this.value =
+          value.substring(0, 5) +
+          "-" +
+          value.substring(5);
+
+        return;
+      }
+
+      // Com DDD — telefone fixo
+      if (value.length === 10) {
+
+        this.value =
+          "(" +
+          value.substring(0, 2) +
+          ") " +
+          value.substring(2, 6) +
+          "-" +
+          value.substring(6);
+
+        return;
+      }
+
+      // Com DDD — celular
+      this.value =
+        "(" +
+        value.substring(0, 2) +
+        ") " +
+        value.substring(2, 7) +
+        "-" +
+        value.substring(7);
     }
+  );
 
-    return new Response(
-      "Método não permitido.",
-      {
-        status: 405,
+  // ============================================================
+  // ENVIO
+  // ============================================================
 
-        headers: {
-          "content-type":
-            "text/plain; charset=UTF-8"
+  document
+    .getElementById("leadForm")
+    .addEventListener(
+      "submit",
+      async function (event) {
+
+        event.preventDefault();
+
+        const button =
+          document.getElementById("submitButton");
+
+        button.disabled = true;
+        button.textContent = "Enviando...";
+
+        const name =
+          document.getElementById("nome")
+            .value
+            .trim();
+
+        const customerPhone =
+          document.getElementById("telefone")
+            .value
+            .replace(/\\D/g, "");
+
+        const address =
+          document.getElementById("endereco")
+            .value
+            .trim();
+
+        const hasClaro =
+          document.getElementById("claro")
+            .value;
+
+        const productSearched =
+          document.getElementById("produto")
+            .value;
+
+        // ======================================================
+        // VALIDAÇÃO TELEFONE
+        // ======================================================
+
+        if (
+          customerPhone.length < 8 ||
+          customerPhone.length > 11
+        ) {
+
+          alert(
+            "Informe um telefone válido com 8 a 11 dígitos."
+          );
+
+          button.disabled = false;
+          button.textContent = "Enviar";
+
+          return;
+        }
+
+        // ======================================================
+        // ENVIA PARA O WORKER
+        // ======================================================
+
+        try {
+
+          const response =
+            await fetch(
+              window.location.href,
+              {
+                method: "POST",
+                headers: {
+                  "Content-Type":
+                    "application/json"
+                },
+                body: JSON.stringify({
+
+                  vendedor:
+                    new URLSearchParams(
+                      window.location.search
+                    ).get("vendedor") || "",
+
+                  name,
+
+                  customer_phone:
+                    customerPhone,
+
+                  address,
+
+                  has_claro:
+                    hasClaro,
+
+                  product_searched:
+                    productSearched
+                })
+              }
+            );
+
+          const result =
+            await response.json();
+
+          if (!response.ok) {
+            throw new Error(
+              result.error ||
+              "Não foi possível registrar o lead."
+            );
+          }
+
+          // ====================================================
+          // LEAD JÁ FOI SALVO NO SUPABASE
+          // AGORA ABRE O WHATSAPP
+          // ====================================================
+
+          alert(
+            "Lead registrado com sucesso!"
+          );
+
+          if (result.whatsapp_url) {
+            window.location.href =
+              result.whatsapp_url;
+            return;
+          }
+
+          // Caso não exista WhatsApp
+          document
+            .getElementById("leadForm")
+            .reset();
+
+        } catch (error) {
+
+          alert(
+            error.message ||
+            "Ocorreu um erro ao registrar o lead."
+          );
+
+        } finally {
+
+          button.disabled = false;
+          button.textContent = "Enviar";
         }
       }
     );
 
+</script>
+
+</body>
+</html>`,
+      {
+        headers: {
+          "Content-Type":
+            "text/html; charset=utf-8"
+        }
+      }
+    );
   }
 };
