@@ -137,3 +137,31 @@ button:active {
       </label>
       <select id="interesse">
         <option value="">Sele
+        <option value="Agora">Agora</option>
+<option value="Depois">Depois</option>
+<option value="Só quero consultar">Só quero consultar</option>
+</select>
+
+<button type="submit">Quero saber mais</button>
+</form>
+
+</div>
+</div>
+
+</body>
+</html>
+`, {
+  headers: {
+    "content-type": "text/html;charset=UTF-8"
+  }
+});
+}
+
+return new Response("Página não encontrada", {
+  status: 404,
+  headers: {
+    "content-type": "text/plain;charset=UTF-8"
+  }
+});
+}
+}
