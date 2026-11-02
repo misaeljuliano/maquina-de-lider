@@ -1,6 +1,8 @@
 export default {
-  async fetch(request) {
+  async fetch(request, env) {
     const url = new URL(request.url);
+    const supabaseUrl = env.SUPABASE_URL;
+const serviceKey = env.SUPABASE_SERVICE_ROLE_KEY;
 
     if (request.method === "GET") {
       return new Response(`<!DOCTYPE html>
