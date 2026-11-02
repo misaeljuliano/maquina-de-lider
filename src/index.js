@@ -1,488 +1,448 @@
-const supabaseUrl = "https://xmipdjjdtruutcumhrzb.supabase.co";
-
-function jsonResponse(data, status = 200) {
-  return new Response(JSON.stringify(data), {
-    status,
-    headers: {
-      "Content-Type": "application/json; charset=utf-8",
-      "Access-Control-Allow-Origin": "*"
-    }
-  });
-}
-
-function normalizePhone(value) {
-  return String(value || "").replace(/\D/g, "");
-}
-
-function formatPhone(value) {
-  const digits = normalizePhone(value);
-
-  if (!digits) return "";
-
-  if (digits.length <= 8) {
-    return digits.length <= 4
-      ? digits
-      : `${digits.slice(0, 4)}-${digits.slice(4)}`;
-  }
-
-  if (digits.length === 9) {
-    return `${digits.slice(0, 5)}-${digits.slice(5)}`;
-  }
-
-  if (digits.length === 10) {
-    return `(${digits.slice(0, 2)}) ${digits.slice(2, 6)}-${digits.slice(6)}`;
-  }
-
-  return `(${digits.slice(0, 2)}) ${digits.slice(2, 7)}-${digits.slice(7)}`;
-}
-
-function escapeHtml(value) {
-  return String(value || "")
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#039;");
-}
-
-
-/*
- * ============================================================
- * WORKER
- * ============================================================
- *
- * Linhas aproximadas: ~45
- *
- * O env fica DENTRO do fetch.
- * Isso corrige o erro:
- * ReferenceError: env is not defined
- */
-
 export default {
   async fetch(request, env) {
-
-    /*
-     * ========================================================
-     * CONFIGURAÇÃO DO SUPABASE
-     * ========================================================
-     *
-     * Linhas aproximadas: ~60
-     */
-
-    const serviceKey = env.SUPABASE_SERVICE_ROLE_KEY;
-
-    if (!serviceKey) {
-      return new Response(
-        "SUPABASE_SERVICE_ROLE_KEY não configurada no Worker.",
-        {
-          status: 500,
-          headers: {
-            "Content-Type": "text/plain; charset=utf-8"
-          }
-        }
-      );
-    }
-
-
-    /*
-     * ========================================================
-     * FUNÇÃO DE COMUNICAÇÃO COM SUPABASE
-     * ========================================================
-     *
-     * Linhas aproximadas: ~80
-     */
-
-    async function supabaseRequest(path, options = {}) {
-
-      return fetch(`${supabaseUrl}${path}`, {
-        ...options,
-
-        headers: {
-          apikey: serviceKey,
-          Authorization: `Bearer ${serviceKey}`,
-          "Content-Type": "application/json",
-          ...(options.headers || {})
-        }
-      });
-    }
-
-
     const url = new URL(request.url);
 
+    /*
+     * ============================================================
+     * SUPABASE CONFIGURATION
+     * ============================================================
+     */
+
+    const supabaseUrl =
+      "https://xmipdjjdtruutcumhrzb.supabase.co";
+
+    const serviceKey =
+      env.SUPABASE_SERVICE_ROLE_KEY;
 
     /*
-     * ========================================================
-     * POST — REGISTRO DO LEAD
-     * ========================================================
-     *
-     * Linhas aproximadas: ~105
+     * ============================================================
+     * POST - RECEIVE AND SAVE LEAD
+     * ============================================================
      */
 
     if (request.method === "POST") {
-
       try {
+        if (!serviceKey) {
+          return new Response(
+            JSON.stringify({
+              success: false,
+              error:
+                "SUPABASE_SERVICE_ROLE_KEY não configurada no Worker."
+            }),
+            {
+              status: 500,
+              headers: {
+                "content-type":
+                  "application/json; charset=UTF-8"
+              }
+            }
+          );
+        }
 
-        const body = await request.json();
+        /*
+         * ========================================================
+         * READ REQUEST
+         * ========================================================
+         */
 
-        const vendedor =
-          String(body.vendedor || "").trim();
+        const data =
+          await request.json();
+
+        const vendor =
+          String(data.vendor || "").trim();
 
         const name =
-          String(body.name || "").trim();
+          String(data.name || "").trim();
 
         const address =
-          String(body.address || "").trim();
+          String(data.address || "").trim();
 
         const hasClaro =
-          String(body.hasClaro || "").trim();
+          String(data.hasClaro || "").trim();
 
         const productSearched =
-          String(body.productSearched || "").trim();
+          String(
+            data.product_searched || ""
+          ).trim();
 
         /*
-         * Telefone:
-         * recebe a informação com ou sem máscara
-         * e transforma em somente números.
+         * ========================================================
+         * VALIDATE PRODUCT
+         * ========================================================
          */
 
-        const customerPhone =
-          normalizePhone(body.customerPhone);
+        const validProducts = [
+          "Internet",
+          "Celular",
+          "TV",
+          "Combo"
+        ];
 
-
-        /*
-         * ====================================================
-         * VALIDAÇÕES
-         * ====================================================
-         *
-         * Linhas aproximadas: ~135
-         */
-
-        if (!vendedor) {
-          return jsonResponse(
+        if (
+          !validProducts.includes(
+            productSearched
+          )
+        ) {
+          return new Response(
+            JSON.stringify({
+              success: false,
+              error:
+                "Selecione o produto pesquisado."
+            }),
             {
-              error: "Vendedor não identificado."
-            },
-            400
-          );
-        }
-
-        if (!name) {
-          return jsonResponse(
-            {
-              error: "Informe o nome."
-            },
-            400
-          );
-        }
-
-        /*
-         * TELEFONE É OBRIGATÓRIO
-         */
-
-        if (!customerPhone) {
-          return jsonResponse(
-            {
-              error: "Informe o telefone."
-            },
-            400
+              status: 400,
+              headers: {
+                "content-type":
+                  "application/json; charset=UTF-8"
+              }
+            }
           );
         }
 
         /*
-         * Aceita:
-         * 8 dígitos
-         * 9 dígitos
-         * 10 dígitos
-         * 11 dígitos
-         *
-         * Sem obrigar DDD.
+         * ========================================================
+         * VALIDATE REQUIRED FIELDS
+         * ========================================================
          */
 
         if (
-          customerPhone.length < 8 ||
-          customerPhone.length > 11
+          !vendor ||
+          !name ||
+          !address
         ) {
-          return jsonResponse(
+          return new Response(
+            JSON.stringify({
+              success: false,
+              error:
+                "Preencha todos os campos obrigatórios."
+            }),
             {
-              error: "Informe um telefone válido."
-            },
-            400
+              status: 400,
+              headers: {
+                "content-type":
+                  "application/json; charset=UTF-8"
+              }
+            }
           );
         }
-
-        if (!address) {
-          return jsonResponse(
-            {
-              error: "Informe o endereço."
-            },
-            400
-          );
-        }
-
-        if (!productSearched) {
-          return jsonResponse(
-            {
-              error: "Selecione o produto pesquisado."
-            },
-            400
-          );
-        }
-
 
         /*
-         * ====================================================
-         * LOCALIZAÇÃO DO VENDEDOR
-         * ====================================================
-         *
-         * Linhas aproximadas: ~185
+         * ========================================================
+         * FIND SELLER
+         * ========================================================
          */
 
+        const sellerUrl =
+          supabaseUrl +
+          "/rest/v1/sellers?slug=eq." +
+          encodeURIComponent(vendor) +
+          "&active=eq.true&select=id,slug,name,region,phone";
+
         const sellerResponse =
-          await supabaseRequest(
-            `/rest/v1/sellers?slug=eq.${encodeURIComponent(vendedor)}&active=eq.true&select=*`
+          await fetch(
+            sellerUrl,
+            {
+              method: "GET",
+              headers: {
+                apikey: serviceKey,
+                Authorization:
+                  "Bearer " + serviceKey
+              }
+            }
           );
 
         if (!sellerResponse.ok) {
+          const sellerError =
+            await sellerResponse.text();
 
-          return jsonResponse(
-            {
+          console.error(
+            "Error querying seller:",
+            sellerError
+          );
+
+          return new Response(
+            JSON.stringify({
+              success: false,
               error:
-                "Não foi possível localizar o vendedor."
-            },
-            500
+                "Não foi possível validar o vendedor.",
+              details:
+                sellerError
+            }),
+            {
+              status: 500,
+              headers: {
+                "content-type":
+                  "application/json; charset=UTF-8"
+              }
+            }
           );
         }
 
         const sellers =
           await sellerResponse.json();
 
-        if (!sellers.length) {
-
-          return jsonResponse(
-            {
+        if (
+          !Array.isArray(sellers) ||
+          sellers.length === 0
+        ) {
+          return new Response(
+            JSON.stringify({
+              success: false,
               error:
                 "Vendedor não encontrado ou inativo."
-            },
-            404
+            }),
+            {
+              status: 404,
+              headers: {
+                "content-type":
+                  "application/json; charset=UTF-8"
+              }
+            }
           );
         }
 
         const seller =
           sellers[0];
 
-
         /*
-         * ====================================================
-         * REGISTRO DO LEAD
-         * ====================================================
-         *
-         * Linhas aproximadas: ~220
+         * ========================================================
+         * CREATE LEAD
+         * ========================================================
          */
 
-        const leadPayload = {
+        const lead = {
+          seller_id:
+            seller.id,
 
-          seller_id: seller.id,
+          region:
+            seller.region,
 
-          seller_slug: seller.slug,
+          name:
+            name,
 
-          seller_name: seller.name,
-
-          region: seller.region,
-
-          customer_name: name,
-
-          /*
-           * Banco recebe SOMENTE números.
-           */
-
-          customer_phone: customerPhone,
-
-          address: address,
+          address:
+            address,
 
           has_claro:
-            hasClaro || null,
+            hasClaro ||
+            "Não informado",
 
           product_searched:
             productSearched,
 
-          status: "NOVO"
+          status:
+            "NOVO",
+
+          submission_id:
+            crypto.randomUUID()
         };
 
+        /*
+         * ========================================================
+         * INSERT LEAD INTO SUPABASE
+         * ========================================================
+         */
 
-        const leadResponse =
-          await supabaseRequest(
-            "/rest/v1/leads",
+        const insertResponse =
+          await fetch(
+            supabaseUrl +
+              "/rest/v1/leads",
             {
               method: "POST",
 
               headers: {
-                Prefer: "return=minimal"
+                apikey:
+                  serviceKey,
+
+                Authorization:
+                  "Bearer " +
+                  serviceKey,
+
+                "Content-Type":
+                  "application/json",
+
+                Prefer:
+                  "return=representation"
               },
 
               body:
-                JSON.stringify(leadPayload)
+                JSON.stringify(
+                  lead
+                )
             }
           );
 
+        const responseText =
+          await insertResponse.text();
 
-        if (!leadResponse.ok) {
+        /*
+         * ========================================================
+         * HANDLE INSERT ERROR
+         * ========================================================
+         */
 
-          const errorText =
-            await leadResponse.text();
+        if (!insertResponse.ok) {
+          console.error(
+            "Supabase lead insert error:",
+            responseText
+          );
 
-          return jsonResponse(
-            {
+          return new Response(
+            JSON.stringify({
+              success: false,
               error:
-                "Não foi possível registrar o lead.",
-
+                "Erro ao gravar lead.",
               details:
-                errorText
-            },
-            500
+                responseText
+            }),
+            {
+              status: 500,
+              headers: {
+                "content-type":
+                  "application/json; charset=UTF-8"
+              }
+            }
           );
         }
 
+        /*
+         * ========================================================
+         * PARSE SUPABASE RESPONSE
+         * ========================================================
+         */
+
+        let savedLead = [];
+
+        if (
+          responseText.trim()
+        ) {
+          try {
+            savedLead =
+              JSON.parse(
+                responseText
+              );
+          } catch (parseError) {
+            console.error(
+              "Could not parse Supabase response:",
+              parseError
+            );
+          }
+        }
 
         /*
-         * ====================================================
-         * WHATSAPP
-         * ====================================================
-         *
-         * Linhas aproximadas: ~270
+         * ========================================================
+         * PREPARE WHATSAPP
+         * ========================================================
          */
 
         const sellerPhone =
-          normalizePhone(seller.phone);
+          String(
+            seller.phone || ""
+          ).replace(
+            /\D/g,
+            ""
+          );
 
-        const formattedCustomerPhone =
-          formatPhone(customerPhone);
+        let whatsappUrl =
+          "";
 
+        if (sellerPhone) {
+          const whatsappPhone =
+            sellerPhone.startsWith("55")
+              ? sellerPhone
+              : "55" + sellerPhone;
 
-        const whatsappMessage =
-`Nome: ${name}
-Telefone: ${formattedCustomerPhone}
-Endereço: ${address}
-Possui Claro? ${hasClaro || ""}
-Produto Pesquisado: ${productSearched}`;
+          const whatsappMessage =
+            `Olá, sou ${name}. ` +
+            `Quero saber mais sobre ${productSearched}. ` +
+            `Meu endereço é ${address}.`;
 
+          whatsappUrl =
+            "https://wa.me/" +
+            whatsappPhone +
+            "?text=" +
+            encodeURIComponent(
+              whatsappMessage
+            );
+        }
 
-        const whatsappUrl =
-          `https://wa.me/${sellerPhone}?text=${encodeURIComponent(
-            whatsappMessage
-          )}`;
+        /*
+         * ========================================================
+         * SUCCESS
+         * ========================================================
+         */
 
+        return new Response(
+          JSON.stringify({
+            success:
+              true,
 
-        return jsonResponse({
+            lead_id:
+              Array.isArray(
+                savedLead
+              ) &&
+              savedLead[0] &&
+              savedLead[0].id
+                ? savedLead[0].id
+                : null,
 
-          success: true,
+            seller:
+              seller.name,
 
-          whatsapp_url:
-            whatsappUrl
-
-        });
-
+            whatsapp_url:
+              whatsappUrl
+          }),
+          {
+            status: 200,
+            headers: {
+              "content-type":
+                "application/json; charset=UTF-8"
+            }
+          }
+        );
 
       } catch (error) {
+        console.error(
+          "Internal error:",
+          error
+        );
 
-        return jsonResponse(
-          {
+        return new Response(
+          JSON.stringify({
+            success:
+              false,
+
             error:
-              "Erro interno ao registrar o lead.",
+              "Erro interno.",
 
             details:
-              error.message
-          },
-          500
+              String(
+                error &&
+                error.message
+                  ? error.message
+                  : error
+              )
+          }),
+          {
+            status: 500,
+            headers: {
+              "content-type":
+                "application/json; charset=UTF-8"
+            }
+          }
         );
       }
     }
 
-
     /*
-     * ========================================================
-     * GET — FORMULÁRIO
-     * ========================================================
-     *
-     * Linhas aproximadas: ~315
+     * ============================================================
+     * GET - FORM
+     * ============================================================
      */
 
     if (request.method === "GET") {
-
-      const vendedor =
-        String(
-          url.searchParams.get("vendedor") || ""
-        ).trim();
-
-
-      if (!vendedor) {
-
-        return new Response(
-          "Vendedor não identificado.",
-          {
-            status: 400,
-
-            headers: {
-              "Content-Type":
-                "text/plain; charset=utf-8"
-            }
-          }
-        );
-      }
-
-
-      /*
-       * Busca o vendedor pelo slug
-       * informado no QR Code.
-       */
-
-      const sellerResponse =
-        await supabaseRequest(
-          `/rest/v1/sellers?slug=eq.${encodeURIComponent(vendedor)}&active=eq.true&select=name`
-        );
-
-
-      if (!sellerResponse.ok) {
-
-        return new Response(
-          "Não foi possível carregar o vendedor.",
-          {
-            status: 500
-          }
-        );
-      }
-
-
-      const sellers =
-        await sellerResponse.json();
-
-
-      if (!sellers.length) {
-
-        return new Response(
-          "Vendedor não encontrado.",
-          {
-            status: 404
-          }
-        );
-      }
-
-
-      const sellerName =
-        escapeHtml(
-          sellers[0].name
-        );
-
-
-      /*
-       * ====================================================
-       * HTML
-       * ====================================================
-       *
-       * Linhas aproximadas: ~370
-       */
-
-      const html = `<!DOCTYPE html>
-
+      return new Response(
+        `<!DOCTYPE html>
 <html lang="pt-BR">
 
 <head>
@@ -496,808 +456,381 @@ Produto Pesquisado: ${productSearched}`;
 
 <title>Claro | Porta a Porta</title>
 
-
 <style>
 
 * {
   box-sizing: border-box;
 }
 
-
 body {
-
   margin: 0;
-
-  background: #f2f2f2;
-
-  font-family:
-    Arial,
-    Helvetica,
-    sans-serif;
-
+  font-family: Arial, sans-serif;
+  background: #f5f5f5;
   color: #222;
 }
 
-
-.page {
-
+.container {
   width: 100%;
-
-  max-width: 760px;
-
-  margin: 0 auto;
-
-  padding:
-    34px
-    28px
-    50px;
+  max-width: 480px;
+  margin: auto;
+  padding: 20px;
 }
-
 
 .card {
-
-  background: #fff;
-
-  border-radius: 30px;
-
-  padding:
-    48px
-    46px
-    46px;
-
-  box-shadow:
-    0 8px 30px
-    rgba(0,0,0,0.08);
+  background: white;
+  border-radius: 18px;
+  padding: 24px;
+  margin-top: 20px;
+  box-shadow: 0 4px 20px rgba(0,0,0,.10);
 }
 
-
-.logo {
-
+h1 {
+  margin: 0 0 8px;
+  font-size: 30px;
   color: #e30613;
-
-  font-size: 58px;
-
-  font-weight: 700;
-
-  line-height: 1;
-
-  margin-bottom: 24px;
 }
-
 
 .subtitle {
-
   color: #666;
-
-  font-size: 31px;
-
-  line-height: 1.1;
-
-  margin-bottom: 50px;
+  margin-bottom: 24px;
+  font-size: 16px;
 }
-
-
-.seller-box {
-
-  background: #eeeeee;
-
-  border-radius: 18px;
-
-  padding:
-    21px
-    24px;
-
-  font-size: 25px;
-
-  margin-bottom: 42px;
-}
-
-
-.seller-box strong {
-  font-weight: 700;
-}
-
-
-.field {
-  margin-bottom: 34px;
-}
-
 
 label {
-
   display: block;
-
-  font-size: 29px;
-
-  font-weight: 700;
-
-  margin-bottom: 16px;
+  font-weight: bold;
+  margin-top: 18px;
+  margin-bottom: 7px;
 }
-
-
-.required {
-  color: #e30613;
-}
-
 
 input,
 select {
-
   width: 100%;
-
-  height: 74px;
-
-  border:
-    2px solid #c9c9c9;
-
-  border-radius: 17px;
-
-  padding:
-    0 24px;
-
-  font-size: 25px;
-
-  background: #fff;
-
-  color: #111;
-
-  outline: none;
+  padding: 14px;
+  border: 1px solid #ccc;
+  border-radius: 10px;
+  font-size: 16px;
+  background: white;
 }
-
-
-input:focus,
-select:focus {
-
-  border-color: #999;
-}
-
-
-input::placeholder {
-
-  color: #888;
-
-  opacity: 1;
-}
-
 
 button {
-
   width: 100%;
-
-  height: 74px;
-
-  border: none;
-
-  border-radius: 17px;
-
+  margin-top: 24px;
+  padding: 16px;
+  border: 0;
+  border-radius: 10px;
   background: #e30613;
-
-  color: #fff;
-
-  font-size: 26px;
-
-  font-weight: 700;
-
+  color: white;
+  font-size: 17px;
+  font-weight: bold;
   cursor: pointer;
 }
 
+button:active {
+  transform: scale(.99);
+}
 
 button:disabled {
-  opacity: 0.65;
+  opacity: .6;
 }
 
-
-.footer {
-
-  text-align: center;
-
-  margin-top: 34px;
-
-  color: #777;
-
-  font-size: 17px;
+.seller {
+  background: #f0f0f0;
+  padding: 12px;
+  border-radius: 10px;
+  margin-bottom: 18px;
+  font-size: 14px;
 }
 
-
-@media (max-width: 600px) {
-
-  .page {
-
-    padding:
-      18px
-      12px
-      30px;
-  }
-
-
-  .card {
-
-    border-radius: 26px;
-
-    padding:
-      34px
-      28px
-      32px;
-  }
-
-
-  .logo {
-    font-size: 52px;
-  }
-
-
-  .subtitle {
-
-    font-size: 28px;
-
-    margin-bottom: 42px;
-  }
-
-
-  .seller-box {
-
-    font-size: 23px;
-
-    margin-bottom: 36px;
-  }
-
-
-  label {
-    font-size: 26px;
-  }
-
-
-  input,
-  select,
-  button {
-
-    height: 68px;
-
-    font-size: 22px;
-  }
-
+.required {
+  color: #d00;
 }
 
 </style>
 
 </head>
 
-
 <body>
 
+<div class="container">
 
-<div class="page">
+  <div class="card">
 
-<div class="card">
+    <h1>
+      Claro
+    </h1>
 
+    <div class="subtitle">
+      Porta a Porta
+    </div>
 
-<div class="logo">
-Claro
-</div>
+    <div class="seller">
 
+      Vendedor:
 
-<div class="subtitle">
-Porta a Porta
-</div>
+      <strong id="seller">
+        Identificando...
+      </strong>
 
+    </div>
 
-<div class="seller-box">
+    <form id="leadForm">
 
-Vendedor:
-<strong>${sellerName}</strong>
+      <input
+        type="hidden"
+        id="vendedor"
+        name="vendedor"
+      >
 
-</div>
+      <label>
+        Nome
+        <span class="required">*</span>
+      </label>
 
+      <input
+        id="nome"
+        required
+        placeholder="Digite seu nome"
+      >
 
-<form id="leadForm">
+      <label>
+        Endereço
+        <span class="required">*</span>
+      </label>
 
+      <input
+        id="endereco"
+        required
+        placeholder="Rua, número e bairro"
+      >
 
-<!-- NOME -->
+      <label>
+        Você possui Claro?
+      </label>
 
-<div class="field">
+      <select id="claro">
 
-<label for="name">
+        <option value="">
+          Selecione
+        </option>
 
-Nome
-<span class="required">*</span>
+        <option value="Não">
+          Não
+        </option>
 
-</label>
+        <option value="Internet">
+          Internet
+        </option>
 
+        <option value="Celular">
+          Celular
+        </option>
 
-<input
+        <option value="TV">
+          TV
+        </option>
 
-id="name"
+        <option value="Combo">
+          Combo
+        </option>
 
-name="name"
+      </select>
 
-type="text"
+      <label>
 
-required
+        Produto pesquisado
 
-autocomplete="name"
+        <span class="required">
+          *
+        </span>
 
->
+      </label>
 
-</div>
+      <select
+        id="produto"
+        required
+      >
 
+        <option value="">
+          Selecione
+        </option>
 
-<!-- TELEFONE -->
+        <option value="Internet">
+          Internet
+        </option>
 
-<div class="field">
+        <option value="Celular">
+          Celular
+        </option>
 
-<label for="customerPhone">
+        <option value="TV">
+          TV
+        </option>
 
-Telefone
-<span class="required">*</span>
+        <option value="Combo">
+          Combo
+        </option>
 
-</label>
+      </select>
 
+      <button
+        id="submitButton"
+        type="submit"
+      >
+        Enviar
+      </button>
 
-<input
+    </form>
 
-id="customerPhone"
-
-name="customerPhone"
-
-type="tel"
-
-required
-
-inputmode="numeric"
-
-autocomplete="tel"
-
-placeholder="(   ) 99999-9999"
-
-maxlength="15"
-
->
-
-</div>
-
-
-<!-- ENDEREÇO -->
-
-<div class="field">
-
-<label for="address">
-
-Endereço
-<span class="required">*</span>
-
-</label>
-
-
-<input
-
-id="address"
-
-name="address"
-
-type="text"
-
-required
-
-autocomplete="street-address"
-
->
-
-</div>
-
-
-<!-- POSSUI CLARO -->
-
-<div class="field">
-
-<label for="hasClaro">
-
-Você possui Claro?
-
-</label>
-
-
-<select
-id="hasClaro"
-name="hasClaro"
->
-
-<option value="">
-Selecione
-</option>
-
-<option value="Não">
-Não
-</option>
-
-<option value="Internet">
-Internet
-</option>
-
-<option value="Celular">
-Celular
-</option>
-
-<option value="TV">
-TV
-</option>
-
-<option value="Combo">
-Combo
-</option>
-
-</select>
+  </div>
 
 </div>
-
-
-<!-- PRODUTO -->
-
-<div class="field">
-
-<label for="productSearched">
-
-Produto pesquisado
-<span class="required">*</span>
-
-</label>
-
-
-<select
-
-id="productSearched"
-
-name="productSearched"
-
-required
-
->
-
-<option value="">
-Selecione
-</option>
-
-<option value="Internet">
-Internet
-</option>
-
-<option value="Celular">
-Celular
-</option>
-
-<option value="TV">
-TV
-</option>
-
-<option value="Combo">
-Combo
-</option>
-
-</select>
-
-</div>
-
-
-<button
-
-id="submitButton"
-
-type="submit"
-
->
-
-Enviar
-
-</button>
-
-
-</form>
-
-
-<div class="footer">
-
-Claro | Porta a Porta
-
-</div>
-
-
-</div>
-
-</div>
-
 
 <script>
 
-/*
- * ========================================================
- * JAVASCRIPT
- * ========================================================
- *
- * Linhas aproximadas: ~650
- */
+const vendedores = {
 
-const vendedor =
-  ${JSON.stringify(vendedor)};
+  "josi-misael":
+    "Josi Misael",
 
+  "mauricio-fuertes":
+    "Maurício Fuertes",
 
-const phoneInput =
-  document.getElementById(
-    "customerPhone"
+  "monique-gomes":
+    "Monique Gomes",
+
+  "juliana-da-silva":
+    "Juliana Da Silva",
+
+  "marcela-cristina":
+    "Marcela Cristina",
+
+  "sandra-da-silva":
+    "Sandra da Silva",
+
+  "patricia-goncalves":
+    "Patrícia Gonçalves",
+
+  "janelle":
+    "Janelle",
+
+  "ana-paula":
+    "Ana Paula",
+
+  "guilherme-santos":
+    "Guilherme Santos"
+
+};
+
+const params =
+  new URLSearchParams(
+    window.location.search
   );
 
+const vendedor =
+  params.get("vendedor");
 
-/*
- * ========================================================
- * MÁSCARA DO TELEFONE
- * ========================================================
- *
- * IMPORTANTE:
- *
- * - Não sugere DDD.
- * - Não insere DDD.
- * - Não cria parênteses/traços quando vazio.
- * - Só mascara depois que o usuário digitar.
- * - Aceita 8 a 11 dígitos.
- *
- * Linhas aproximadas: ~670
- */
+const sellerElement =
+  document.getElementById(
+    "seller"
+  );
 
-phoneInput.addEventListener(
-  "input",
-  function () {
-
-    let digits =
-      this.value.replace(
-        /\\D/g,
-        ""
-      );
-
-
-    /*
-     * Máximo:
-     * 11 dígitos.
-     */
-
-    digits =
-      digits.slice(
-        0,
-        11
-      );
-
-
-    /*
-     * Campo vazio:
-     * permanece vazio.
-     */
-
-    if (!digits) {
-
-      this.value = "";
-
-      return;
-    }
-
-
-    /*
-     * 1 a 4 dígitos
-     */
-
-    if (digits.length <= 4) {
-
-      this.value =
-        digits;
-
-      return;
-    }
-
-
-    /*
-     * 5 a 8 dígitos
-     *
-     * 9999-9999
-     */
-
-    if (digits.length <= 8) {
-
-      this.value =
-        digits.slice(0, 4)
-        + "-"
-        + digits.slice(4);
-
-      return;
-    }
-
-
-    /*
-     * 9 dígitos
-     *
-     * 99999-9999
-     */
-
-    if (digits.length === 9) {
-
-      this.value =
-        digits.slice(0, 5)
-        + "-"
-        + digits.slice(5);
-
-      return;
-    }
-
-
-    /*
-     * 10 dígitos
-     *
-     * (99) 9999-9999
-     */
-
-    if (digits.length === 10) {
-
-      this.value =
-        "("
-        + digits.slice(0, 2)
-        + ") "
-        + digits.slice(2, 6)
-        + "-"
-        + digits.slice(6);
-
-      return;
-    }
-
-
-    /*
-     * 11 dígitos
-     *
-     * (99) 99999-9999
-     */
-
-    this.value =
-      "("
-      + digits.slice(0, 2)
-      + ") "
-      + digits.slice(2, 7)
-      + "-"
-      + digits.slice(7);
-
-  }
-);
-
-
-/*
- * ========================================================
- * ENVIO DO FORMULÁRIO
- * ========================================================
- *
- * Linhas aproximadas: ~760
- */
+const vendedorInput =
+  document.getElementById(
+    "vendedor"
+  );
 
 const form =
   document.getElementById(
     "leadForm"
   );
 
-
 const submitButton =
   document.getElementById(
     "submitButton"
   );
 
+if (
+  vendedor &&
+  vendedores[vendedor]
+) {
+
+  sellerElement.textContent =
+    vendedores[vendedor];
+
+  vendedorInput.value =
+    vendedor;
+
+} else {
+
+  sellerElement.textContent =
+    "Vendedor não identificado";
+
+}
 
 form.addEventListener(
   "submit",
-  async function (event) {
+  async function(event) {
 
     event.preventDefault();
 
-
-    const name =
-      document
-        .getElementById("name")
-        .value
-        .trim();
-
-
-    const address =
-      document
-        .getElementById("address")
-        .value
-        .trim();
-
-
-    const hasClaro =
-      document
-        .getElementById("hasClaro")
-        .value;
-
-
-    const productSearched =
-      document
-        .getElementById("productSearched")
-        .value;
-
-
-    /*
-     * Remove qualquer máscara
-     * antes de enviar ao Worker.
-     */
-
-    const customerPhone =
-      phoneInput.value.replace(
-        /\\D/g,
-        ""
-      );
-
-
-    /*
-     * ====================================================
-     * VALIDAÇÃO
-     * ====================================================
-     */
-
-    if (!name) {
-
-      alert(
-        "Informe o nome."
-      );
-
-      return;
-    }
-
-
-    /*
-     * TELEFONE OBRIGATÓRIO
-     */
-
-    if (!customerPhone) {
-
-      alert(
-        "Informe o telefone."
-      );
-
-      phoneInput.focus();
-
-      return;
-    }
-
-
     if (
-      customerPhone.length < 8 ||
-      customerPhone.length > 11
+      !vendedor ||
+      !vendedores[vendedor]
     ) {
 
       alert(
-        "Informe um telefone válido."
+        "Vendedor não identificado. " +
+        "Utilize o QR Code correto."
       );
 
-      phoneInput.focus();
-
       return;
+
     }
 
+    const payload = {
 
-    if (!address) {
+      vendor:
+        vendedorInput.value,
+
+      name:
+        document
+          .getElementById("nome")
+          .value
+          .trim(),
+
+      address:
+        document
+          .getElementById("endereco")
+          .value
+          .trim(),
+
+      hasClaro:
+        document
+          .getElementById("claro")
+          .value,
+
+      product_searched:
+        document
+          .getElementById("produto")
+          .value
+
+    };
+
+    if (
+      !payload.vendor ||
+      !payload.name ||
+      !payload.address ||
+      !payload.product_searched
+    ) {
 
       alert(
-        "Informe o endereço."
+        "Preencha os campos obrigatórios."
       );
 
       return;
+
     }
-
-
-    if (!productSearched) {
-
-      alert(
-        "Selecione o produto pesquisado."
-      );
-
-      return;
-    }
-
-
-    /*
-     * Desabilita botão
-     * durante o envio.
-     */
 
     submitButton.disabled =
       true;
@@ -1305,14 +838,14 @@ form.addEventListener(
     submitButton.textContent =
       "Enviando...";
 
-
     try {
 
       const response =
         await fetch(
           window.location.pathname,
           {
-            method: "POST",
+            method:
+              "POST",
 
             headers: {
               "Content-Type":
@@ -1320,50 +853,46 @@ form.addEventListener(
             },
 
             body:
-              JSON.stringify({
-
-                vendedor,
-
-                name,
-
-                customerPhone,
-
-                address,
-
-                hasClaro,
-
-                productSearched
-
-              })
+              JSON.stringify(
+                payload
+              )
           }
         );
-
 
       const result =
         await response.json();
 
-
-      if (!response.ok) {
+      if (
+        !response.ok ||
+        !result.success
+      ) {
 
         throw new Error(
-          result.error ||
-          "Não foi possível registrar o lead."
+
+          result.details
+
+            ? (
+                result.error ||
+                "Erro"
+              ) +
+              ": " +
+              result.details
+
+            : result.error ||
+              "Erro ao gravar lead."
+
         );
+
       }
-
-
-      /*
-       * Lead salvo com sucesso.
-       */
 
       alert(
         "Lead registrado com sucesso!"
       );
 
-
       /*
-       * Abre WhatsApp
-       * somente depois do registro.
+       * ==========================================================
+       * OPEN SELLER WHATSAPP
+       * ==========================================================
        */
 
       if (
@@ -1372,22 +901,39 @@ form.addEventListener(
 
         window.location.href =
           result.whatsapp_url;
-      }
 
+      } else {
+
+        form.reset();
+
+        vendedorInput.value =
+          vendedor;
+
+        sellerElement.textContent =
+          vendedores[vendedor];
+
+      }
 
     } catch (error) {
 
-      alert(
-        error.message ||
-        "Ocorreu um erro. Tente novamente."
+      console.error(
+        "Lead submission error:",
+        error
       );
 
+      alert(
+        error.message ||
+        "Erro ao registrar lead."
+      );
+
+    } finally {
 
       submitButton.disabled =
         false;
 
       submitButton.textContent =
         "Enviar";
+
     }
 
   }
@@ -1395,43 +941,35 @@ form.addEventListener(
 
 </script>
 
-
 </body>
 
-</html>`;
-
-
-      return new Response(
-        html,
+</html>`,
         {
           status: 200,
 
           headers: {
-
-            "Content-Type":
-              "text/html; charset=utf-8",
-
-            "Cache-Control":
-              "no-store"
-
+            "content-type":
+              "text/html; charset=UTF-8"
           }
         }
       );
     }
 
-
     /*
-     * ========================================================
-     * MÉTODO NÃO PERMITIDO
-     * ========================================================
-     *
-     * Linhas aproximadas: ~900
+     * ============================================================
+     * OTHER METHODS
+     * ============================================================
      */
 
     return new Response(
       "Método não permitido.",
       {
-        status: 405
+        status: 405,
+
+        headers: {
+          "content-type":
+            "text/plain; charset=UTF-8"
+        }
       }
     );
 
