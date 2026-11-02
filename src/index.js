@@ -136,10 +136,10 @@ button:active {
         Qual seu interesse?
       </label>
       <select id="interesse">
-        <option value="">Selecione</option>
-        <option value="Agora">Agora</option>
-<option value="Depois">Depois</option>
-<option value="Só quero consultar">Só quero consultar</option>
+  <option value="">Selecione</option>
+  <option value="Agora">Agora</option>
+  <option value="Depois">Depois</option>
+  <option value="Só quero consultar">Só quero consultar</option>
 </select>
 
 <button type="submit">Quero saber mais</button>
