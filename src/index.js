@@ -165,7 +165,7 @@ const params = new URLSearchParams(window.location.search);
 const vendedor = params.get("vendedor");
 
 if (vendedor && vendedores[vendedor]) {
-  document.getElementById("seller").textContent = vendedores[vendedor];
+document.getElementById("seller").textContent = vendedores[vendedor];
 }
 </script>
 </body>
