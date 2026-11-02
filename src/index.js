@@ -147,7 +147,27 @@ button:active {
 
 </div>
 </div>
+<script>
+const vendedores = {
+  "josi-misael": "Josi Misael",
+  "mauricio-fuertes": "Maurício Fuertes",
+  "monique-gomes": "Monique Gomes",
+  "juliana-da-silva": "Juliana Da Silva",
+  "marcela-cristina": "Marcela Cristina",
+  "sandra-da-silva": "Sandra da Silva",
+  "patricia-goncalves": "Patrícia Gonçalves",
+  "janelle": "Janelle",
+  "ana-paula": "Ana Paula",
+  "guilherme-santos": "Guilherme Santos"
+};
 
+const params = new URLSearchParams(window.location.search);
+const vendedor = params.get("vendedor");
+
+if (vendedor && vendedores[vendedor]) {
+  document.getElementById("seller").textContent = vendedores[vendedor];
+}
+</script>
 </body>
 </html>
 `, {
