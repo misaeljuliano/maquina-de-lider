@@ -1,52 +1,98 @@
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
+
     const supabaseUrl = env.SUPABASE_URL;
-const serviceKey = env.SUPABASE_SERVICE_ROLE_KEY;
-        if (request.method === "POST") {
+    const serviceKey = env.SUPABASE_SERVICE_ROLE_KEY;
+
+    /*
+     * ============================================================
+     * POST — RECEBER E GRAVAR LEAD
+     * ============================================================
+     */
+    if (request.method === "POST") {
       try {
         const data = await request.json();
 
-        const vendor = data.vendor;
-        const name = data.name;
-        const address = data.address;
-        const hasClaro = data.hasClaro;
-        const interest = data.interest;
+        const vendor = String(data.vendor || "").trim();
+        const name = String(data.name || "").trim();
+        const address = String(data.address || "").trim();
+        const hasClaro = String(data.hasClaro || "").trim();
+        const interest = String(data.interest || "").trim();
 
+        // Validação dos campos obrigatórios
         if (!vendor || !name || !address || !interest) {
           return new Response(
-            JSON.stringify({ success: false, error: "Dados obrigatórios não preenchidos." }),
+            JSON.stringify({
+              success: false,
+              error: "Preencha todos os campos obrigatórios."
+            }),
             {
               status: 400,
-              headers: { "content-type": "application/json;charset=UTF-8" }
+              headers: {
+                "content-type": "application/json; charset=UTF-8"
+              }
             }
           );
         }
 
+        /*
+         * Busca o vendedor pelo slug.
+         * O telefone não é enviado para o navegador.
+         */
         const sellerResponse = await fetch(
-          `${supabaseUrl}/rest/v1/sellers?slug=eq.${encodeURIComponent(vendor)}&active=eq.true&select=id,region`,
+          `${supabaseUrl}/rest/v1/sellers?slug=eq.${encodeURIComponent(
+            vendor
+          )}&active=eq.true&select=id,slug,name,region,phone`,
           {
             headers: {
-              "apikey": serviceKey,
-              "Authorization": `Bearer ${serviceKey}`
+              apikey: serviceKey,
+              Authorization: `Bearer ${serviceKey}`
             }
           }
         );
+
+        if (!sellerResponse.ok) {
+          const sellerError = await sellerResponse.text();
+
+          console.error("Erro ao consultar vendedor:", sellerError);
+
+          return new Response(
+            JSON.stringify({
+              success: false,
+              error: "Não foi possível validar o vendedor."
+            }),
+            {
+              status: 500,
+              headers: {
+                "content-type": "application/json; charset=UTF-8"
+              }
+            }
+          );
+        }
 
         const sellers = await sellerResponse.json();
 
         if (!sellers.length) {
           return new Response(
-            JSON.stringify({ success: false, error: "Vendedor não encontrado." }),
+            JSON.stringify({
+              success: false,
+              error: "Vendedor não encontrado ou inativo."
+            }),
             {
               status: 404,
-              headers: { "content-type": "application/json;charset=UTF-8" }
+              headers: {
+                "content-type": "application/json; charset=UTF-8"
+              }
             }
           );
         }
 
         const seller = sellers[0];
 
+        /*
+         * Classificação da temperatura
+         */
         const temperature =
           interest === "Agora"
             ? "HOT"
@@ -54,30 +100,38 @@ const serviceKey = env.SUPABASE_SERVICE_ROLE_KEY;
               ? "WARM"
               : "CONSULTA";
 
+        /*
+         * ========================================================
+         * LEAD
+         *
+         * Mantemos somente os campos estruturais já existentes
+         * na tabela leads para evitar erro por coluna inexistente.
+         * ========================================================
+         */
         const lead = {
           seller_id: seller.id,
           region: seller.region,
-          name,
-          address,
+          name: name,
+          address: address,
           has_claro: hasClaro || "Não informado",
-          interest,
-          best_time: null,
-          origin: "QR",
-          temperature,
+          interest: interest,
+          temperature: temperature,
           status: "NOVO",
-          next_step: "Realizar contato",
           submission_id: crypto.randomUUID()
         };
 
+        /*
+         * Gravação no Supabase
+         */
         const insertResponse = await fetch(
           `${supabaseUrl}/rest/v1/leads`,
           {
             method: "POST",
             headers: {
-              "apikey": serviceKey,
-              "Authorization": `Bearer ${serviceKey}`,
+              apikey: serviceKey,
+              Authorization: `Bearer ${serviceKey}`,
               "Content-Type": "application/json",
-              "Prefer": "return=representation"
+              Prefer: "return=representation"
             },
             body: JSON.stringify(lead)
           }
@@ -85,6 +139,8 @@ const serviceKey = env.SUPABASE_SERVICE_ROLE_KEY;
 
         if (!insertResponse.ok) {
           const errorText = await insertResponse.text();
+
+          console.error("Erro Supabase ao gravar lead:", errorText);
 
           return new Response(
             JSON.stringify({
@@ -94,25 +150,34 @@ const serviceKey = env.SUPABASE_SERVICE_ROLE_KEY;
             }),
             {
               status: 500,
-              headers: { "content-type": "application/json;charset=UTF-8" }
+              headers: {
+                "content-type": "application/json; charset=UTF-8"
+              }
             }
           );
         }
 
         const savedLead = await insertResponse.json();
 
+        /*
+         * Resposta de sucesso
+         */
         return new Response(
           JSON.stringify({
             success: true,
-            lead_id: savedLead[0].id
+            lead_id: savedLead?.[0]?.id || null,
+            seller: seller.name
           }),
           {
             status: 200,
-            headers: { "content-type": "application/json;charset=UTF-8" }
+            headers: {
+              "content-type": "application/json; charset=UTF-8"
+            }
           }
         );
-
       } catch (error) {
+        console.error("Erro interno:", error);
+
         return new Response(
           JSON.stringify({
             success: false,
@@ -121,21 +186,36 @@ const serviceKey = env.SUPABASE_SERVICE_ROLE_KEY;
           }),
           {
             status: 500,
-            headers: { "content-type": "application/json;charset=UTF-8" }
+            headers: {
+              "content-type": "application/json; charset=UTF-8"
+            }
           }
         );
       }
     }
 
+    /*
+     * ============================================================
+     * GET — FORMULÁRIO
+     * ============================================================
+     */
     if (request.method === "GET") {
-      return new Response(`<!DOCTYPE html>
+      return new Response(
+        `<!DOCTYPE html>
 <html lang="pt-BR">
+
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+<meta
+  name="viewport"
+  content="width=device-width, initial-scale=1.0"
+>
+
 <title>Máquina de Líder</title>
 
 <style>
+
 * {
   box-sizing: border-box;
 }
@@ -179,7 +259,8 @@ label {
   margin-bottom: 7px;
 }
 
-input, select {
+input,
+select {
   width: 100%;
   padding: 14px;
   border: 1px solid #ccc;
@@ -204,6 +285,10 @@ button:active {
   transform: scale(.99);
 }
 
+button:disabled {
+  opacity: .6;
+}
+
 .seller {
   background: #f0f0f0;
   padding: 12px;
@@ -215,12 +300,14 @@ button:active {
 .required {
   color: #d00;
 }
+
 </style>
 </head>
 
 <body>
 
 <div class="container">
+
   <div class="card">
 
     <h1>Máquina de Líder</h1>
@@ -230,49 +317,90 @@ button:active {
     </div>
 
     <div class="seller">
-      Vendedor: <strong id="seller">Identificando...</strong>
+      Vendedor:
+      <strong id="seller">Identificando...</strong>
     </div>
 
     <form id="leadForm">
-<input type="hidden" id="vendedor" name="vendedor">
+
+      <input
+        type="hidden"
+        id="vendedor"
+        name="vendedor"
+      >
+
       <label>
         Nome <span class="required">*</span>
       </label>
-      <input id="nome" required placeholder="Digite seu nome">
+
+      <input
+        id="nome"
+        required
+        placeholder="Digite seu nome"
+      >
 
       <label>
         Endereço <span class="required">*</span>
       </label>
-      <input id="endereco" required placeholder="Rua, número e bairro">
+
+      <input
+        id="endereco"
+        required
+        placeholder="Rua, número e bairro"
+      >
 
       <label>
         Você possui Claro?
       </label>
+
       <select id="claro">
+
         <option value="">Selecione</option>
         <option value="Não">Não</option>
         <option value="Internet">Internet</option>
         <option value="Celular">Celular</option>
         <option value="TV">TV</option>
         <option value="Combo">Combo</option>
+
       </select>
 
       <label>
         Qual seu interesse?
+        <span class="required">*</span>
       </label>
-      <select id="interesse">
-  <option value="">Selecione</option>
-  <option value="Agora">Agora</option>
-  <option value="Depois">Depois</option>
-  <option value="Só quero consultar">Só quero consultar</option>
-</select>
 
-<button type="submit">Quero saber mais</button>
-</form>
+      <select id="interesse" required>
+
+        <option value="">Selecione</option>
+        <option value="Agora">Agora</option>
+        <option value="Depois">Depois</option>
+        <option value="Só quero consultar">
+          Só quero consultar
+        </option>
+
+      </select>
+
+      <button
+        id="submitButton"
+        type="submit"
+      >
+        Quero saber mais
+      </button>
+
+    </form>
+
+  </div>
 
 </div>
-</div>
+
 <script>
+
+/*
+ * ============================================================
+ * VENDEDORES DO PILOTO — SANTOS
+ * ============================================================
+ */
+
 const vendedores = {
   "josi-misael": "Josi Misael",
   "mauricio-fuertes": "Maurício Fuertes",
@@ -286,67 +414,248 @@ const vendedores = {
   "guilherme-santos": "Guilherme Santos"
 };
 
-const params = new URLSearchParams(window.location.search);
+/*
+ * ============================================================
+ * IDENTIFICAÇÃO DO VENDEDOR PELO QR CODE
+ * Exemplo:
+ *
+ * https://maquinadelider.com.br/?vendedor=josi-misael
+ * ============================================================
+ */
+
+const params = new URLSearchParams(
+  window.location.search
+);
+
 const vendedor = params.get("vendedor");
 
+const sellerElement =
+  document.getElementById("seller");
+
+const vendedorInput =
+  document.getElementById("vendedor");
+
+const form =
+  document.getElementById("leadForm");
+
+const submitButton =
+  document.getElementById("submitButton");
+
+
+/*
+ * Validação do vendedor
+ */
+
 if (vendedor && vendedores[vendedor]) {
-  document.getElementById("seller").textContent = vendedores[vendedor];
-  document.getElementById("vendedor").value = vendedor;
+
+  sellerElement.textContent =
+    vendedores[vendedor];
+
+  vendedorInput.value =
+    vendedor;
+
+} else {
+
+  sellerElement.textContent =
+    "Vendedor não identificado";
+
 }
 
-document.getElementById("leadForm").addEventListener("submit", async function(event) {
-  event.preventDefault();
 
-  const payload = {
-    vendor: document.getElementById("vendedor").value,
-    name: document.getElementById("nome").value.trim(),
-    address: document.getElementById("endereco").value.trim(),
-    hasClaro: document.getElementById("claro").value,
-    interest: document.getElementById("interesse").value
-  };
+/*
+ * ============================================================
+ * ENVIO DO LEAD
+ * ============================================================
+ */
 
-  if (!payload.vendor || !payload.name || !payload.address || !payload.interest) {
-    alert("Preencha os campos obrigatórios.");
-    return;
-  }
+form.addEventListener(
+  "submit",
+  async function(event) {
 
-  try {
-    const response = await fetch(window.location.pathname, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify(payload)
-    });
+    event.preventDefault();
 
-    const result = await response.json();
+    /*
+     * O vendedor precisa estar identificado
+     */
+    if (!vendedor || !vendedores[vendedor]) {
 
-    if (!response.ok || !result.success) {
-      throw new Error(result.error || "Erro ao gravar lead.");
+      alert(
+        "Vendedor não identificado. " +
+        "Utilize o QR Code correto."
+      );
+
+      return;
     }
 
-    alert("Lead registrado com sucesso!");
-    document.getElementById("leadForm").reset();
-    document.getElementById("vendedor").value = vendedor || "";
-  } catch (error) {
-    alert(error.message || "Erro ao registrar lead.");
-  }
-});
-</script>
-</body>
-</html>
-`, {
-  headers: {
-    "content-type": "text/html;charset=UTF-8"
-  }
-});
-}
+    const payload = {
 
-return new Response("Página não encontrada", {
-  status: 404,
-  headers: {
-    "content-type": "text/plain;charset=UTF-8"
+      vendor:
+        vendedorInput.value,
+
+      name:
+        document
+          .getElementById("nome")
+          .value
+          .trim(),
+
+      address:
+        document
+          .getElementById("endereco")
+          .value
+          .trim(),
+
+      hasClaro:
+        document
+          .getElementById("claro")
+          .value,
+
+      interest:
+        document
+          .getElementById("interesse")
+          .value
+
+    };
+
+
+    /*
+     * Validação no navegador
+     */
+
+    if (
+      !payload.vendor ||
+      !payload.name ||
+      !payload.address ||
+      !payload.interest
+    ) {
+
+      alert(
+        "Preencha os campos obrigatórios."
+      );
+
+      return;
+    }
+
+
+    /*
+     * Evita duplo clique
+     */
+
+    submitButton.disabled = true;
+
+    submitButton.textContent =
+      "Registrando...";
+
+
+    try {
+
+      const response = await fetch(
+        window.location.pathname,
+        {
+          method: "POST",
+
+          headers: {
+            "Content-Type":
+              "application/json"
+          },
+
+          body:
+            JSON.stringify(payload)
+        }
+      );
+
+
+      const result =
+        await response.json();
+
+
+      if (
+        !response.ok ||
+        !result.success
+      ) {
+
+        throw new Error(
+          result.error ||
+          "Erro ao gravar lead."
+        );
+
+      }
+
+
+      /*
+       * Sucesso
+       */
+
+      alert(
+        "Lead registrado com sucesso!"
+      );
+
+
+      form.reset();
+
+
+      /*
+       * Mantém o vendedor identificado
+       */
+
+      vendedorInput.value =
+        vendedor;
+
+
+      sellerElement.textContent =
+        vendedores[vendedor];
+
+
+    } catch (error) {
+
+      console.error(error);
+
+      alert(
+        error.message ||
+        "Erro ao registrar lead."
+      );
+
+    } finally {
+
+      submitButton.disabled = false;
+
+      submitButton.textContent =
+        "Quero saber mais";
+
+    }
+
   }
-});
-}
-}
+);
+
+</script>
+
+</body>
+</html>`,
+        {
+          status: 200,
+          headers: {
+            "content-type":
+              "text/html; charset=UTF-8"
+          }
+        }
+      );
+    }
+
+
+    /*
+     * ============================================================
+     * OUTROS MÉTODOS
+     * ============================================================
+     */
+
+    return new Response(
+      "Método não permitido.",
+      {
+        status: 405,
+        headers: {
+          "content-type":
+            "text/plain; charset=UTF-8"
+        }
+      }
+    );
+  }
+};
