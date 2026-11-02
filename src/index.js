@@ -17,7 +17,7 @@ export default {
     }
 
     // ============================================================
-    // AUXILIARES
+    // FUNÇÕES AUXILIARES
     // ============================================================
 
     function jsonResponse(data, status = 200) {
@@ -77,6 +77,15 @@ export default {
       return digits;
     }
 
+    function escapeHtml(value) {
+      return String(value || "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
+    }
+
     // ============================================================
     // POST — REGISTRO DO LEAD
     // ============================================================
@@ -103,6 +112,10 @@ export default {
           "TV",
           "Combo"
         ];
+
+        // --------------------------------------------------------
+        // VALIDAÇÕES
+        // --------------------------------------------------------
 
         if (!vendedor) {
           return jsonResponse(
@@ -132,6 +145,9 @@ export default {
           );
         }
 
+        // Aceita:
+        // 8 ou 9 dígitos sem DDD
+        // 10 ou 11 dígitos com DDD
         if (
           customerPhone.length < 8 ||
           customerPhone.length > 11
@@ -152,9 +168,9 @@ export default {
           );
         }
 
-        // ========================================================
+        // --------------------------------------------------------
         // BUSCA VENDEDOR
-        // ========================================================
+        // --------------------------------------------------------
 
         const sellerResponse = await fetch(
           `${supabaseUrl}/rest/v1/sellers?slug=eq.${encodeURIComponent(
@@ -186,9 +202,9 @@ export default {
 
         const seller = sellers[0];
 
-        // ========================================================
+        // --------------------------------------------------------
         // REGISTRA LEAD
-        // ========================================================
+        // --------------------------------------------------------
 
         const leadPayload = {
           seller_id: seller.id,
@@ -229,9 +245,9 @@ export default {
           );
         }
 
-        // ========================================================
-        // WHATSAPP
-        // ========================================================
+        // --------------------------------------------------------
+        // WHATSAPP DO VENDEDOR
+        // --------------------------------------------------------
 
         const sellerPhone = normalizePhone(
           seller.phone
@@ -312,6 +328,8 @@ Produto Pesquisado: ${productSearched}`;
       }
     }
 
+    const safeSellerName = escapeHtml(sellerName);
+
     return new Response(
       `<!DOCTYPE html>
 <html lang="pt-BR">
@@ -333,10 +351,14 @@ Produto Pesquisado: ${productSearched}`;
       box-sizing: border-box;
     }
 
+    html,
     body {
       margin: 0;
       padding: 0;
-      min-height: 100vh;
+      min-height: 100%;
+    }
+
+    body {
       background: #f4f4f4;
       font-family:
         -apple-system,
@@ -350,66 +372,81 @@ Produto Pesquisado: ${productSearched}`;
 
     .page {
       width: 100%;
-      max-width: 480px;
+      max-width: 760px;
       margin: 0 auto;
-      padding: 28px 18px 40px;
+      padding: 34px 28px 50px;
     }
 
-    .header {
-      text-align: center;
-      margin-bottom: 22px;
+    /* ==========================================================
+       CARD PRINCIPAL — REFERÊNCIA VISUAL
+       ========================================================== */
+
+    .card {
+      background: #ffffff;
+      border-radius: 30px;
+      padding: 48px 46px 46px;
+      box-shadow:
+        0 14px 40px rgba(0, 0, 0, 0.08);
     }
+
+    /* ==========================================================
+       CABEÇALHO
+       ========================================================== */
 
     .logo {
       color: #e30613;
-      font-size: 40px;
-      font-weight: 800;
+      font-size: 58px;
       line-height: 1;
-      letter-spacing: -1.5px;
+      font-weight: 800;
+      letter-spacing: -2px;
+      margin-bottom: 20px;
     }
 
     .subtitle {
-      margin-top: 6px;
-      color: #333;
-      font-size: 16px;
-      font-weight: 600;
+      color: #666666;
+      font-size: 31px;
+      line-height: 1.15;
+      font-weight: 400;
+      margin-bottom: 42px;
     }
 
-    .card {
-      background: #fff;
-      border-radius: 18px;
-      padding: 24px;
-      box-shadow:
-        0 8px 30px rgba(0, 0, 0, 0.08);
-    }
+    /* ==========================================================
+       VENDEDOR
+       ========================================================== */
 
     .seller-box {
-      background: #f7f7f7;
-      border: 1px solid #e5e5e5;
-      border-radius: 10px;
-      padding: 12px 14px;
-      margin-bottom: 22px;
+      width: 100%;
+      background: #eeeeee;
+      border-radius: 18px;
+      padding: 21px 24px;
+      margin-bottom: 38px;
+      font-size: 25px;
+      line-height: 1.25;
+      color: #222222;
     }
 
     .seller-label {
-      display: block;
-      font-size: 12px;
-      color: #777;
-      font-weight: 600;
-      margin-bottom: 3px;
+      font-weight: 400;
     }
 
     .seller-name {
-      display: block;
-      font-size: 16px;
-      color: #222;
-      font-weight: 700;
+      font-weight: 800;
+    }
+
+    /* ==========================================================
+       CAMPOS
+       ========================================================== */
+
+    .field {
+      margin-bottom: 31px;
     }
 
     label {
       display: block;
-      margin-bottom: 7px;
-      font-size: 14px;
+      margin-bottom: 13px;
+      color: #252525;
+      font-size: 26px;
+      line-height: 1.15;
       font-weight: 700;
     }
 
@@ -420,49 +457,50 @@ Produto Pesquisado: ${productSearched}`;
     input,
     select {
       width: 100%;
-      height: 48px;
-      border: 1px solid #d0d0d0;
-      border-radius: 10px;
-      background: #fff;
-      padding: 0 14px;
-      font-size: 16px;
-      color: #222;
+      height: 64px;
+      border: 2px solid #cccccc;
+      border-radius: 16px;
+      background: #ffffff;
+      padding: 0 27px;
+      color: #171717;
+      font-size: 25px;
+      font-family: inherit;
       outline: none;
-      margin-bottom: 18px;
+      appearance: auto;
+    }
+
+    input::placeholder {
+      color: #9a9a9a;
+      opacity: 1;
     }
 
     input:focus,
     select:focus {
-      border-color: #e30613;
-      box-shadow:
-        0 0 0 3px rgba(227, 6, 19, 0.08);
-    }
-
-    input::placeholder {
-      color: #999;
+      border-color: #bdbdbd;
+      box-shadow: none;
     }
 
     .phone-input {
       letter-spacing: 0.2px;
     }
 
+    /* ==========================================================
+       BOTÃO
+       ========================================================== */
+
     button {
       width: 100%;
-      height: 50px;
-      margin-top: 2px;
+      height: 72px;
+      margin-top: 4px;
       border: 0;
-      border-radius: 10px;
-      background: #e30613;
-      color: #fff;
-      font-size: 17px;
-      font-weight: 700;
+      border-radius: 16px;
+      background: #ed0010;
+      color: #ffffff;
+      font-family: inherit;
+      font-size: 27px;
+      font-weight: 800;
       cursor: pointer;
-      box-shadow:
-        0 4px 10px rgba(227, 6, 19, 0.18);
-    }
-
-    button:active {
-      transform: translateY(1px);
+      box-shadow: none;
     }
 
     button:disabled {
@@ -470,11 +508,60 @@ Produto Pesquisado: ${productSearched}`;
       cursor: not-allowed;
     }
 
-    .footer {
-      text-align: center;
-      margin-top: 18px;
-      color: #888;
-      font-size: 12px;
+    /* ==========================================================
+       RESPONSIVO
+       ========================================================== */
+
+    @media (max-width: 600px) {
+
+      .page {
+        max-width: 100%;
+        padding: 28px 18px 40px;
+      }
+
+      .card {
+        border-radius: 28px;
+        padding: 34px 28px 32px;
+      }
+
+      .logo {
+        font-size: 48px;
+      }
+
+      .subtitle {
+        font-size: 27px;
+        margin-bottom: 34px;
+      }
+
+      .seller-box {
+        font-size: 21px;
+        padding: 18px 20px;
+        border-radius: 16px;
+        margin-bottom: 31px;
+      }
+
+      .field {
+        margin-bottom: 25px;
+      }
+
+      label {
+        font-size: 21px;
+        margin-bottom: 11px;
+      }
+
+      input,
+      select {
+        height: 60px;
+        border-radius: 15px;
+        padding: 0 20px;
+        font-size: 20px;
+      }
+
+      button {
+        height: 62px;
+        border-radius: 15px;
+        font-size: 23px;
+      }
     }
 
   </style>
@@ -483,9 +570,9 @@ Produto Pesquisado: ${productSearched}`;
 
 <body>
 
-  <div class="page">
+  <main class="page">
 
-    <div class="header">
+    <section class="card">
 
       <div class="logo">
         Claro
@@ -495,23 +582,12 @@ Produto Pesquisado: ${productSearched}`;
         Porta a Porta
       </div>
 
-    </div>
-
-    <div class="card">
-
       ${
         sellerName
           ? `
       <div class="seller-box">
-
-        <span class="seller-label">
-          Vendedor
-        </span>
-
-        <span class="seller-name">
-          ${sellerName}
-        </span>
-
+        <span class="seller-label">Vendedor: </span>
+        <span class="seller-name">${safeSellerName}</span>
       </div>
       `
           : ""
@@ -519,108 +595,140 @@ Produto Pesquisado: ${productSearched}`;
 
       <form id="leadForm">
 
-        <label for="nome">
-          Nome
-          <span class="required">*</span>
-        </label>
+        <!-- NOME -->
 
-        <input
-          id="nome"
-          type="text"
-          required
-          autocomplete="name"
-          placeholder="Digite seu nome"
-        >
+        <div class="field">
 
-        <label for="telefone">
-          Telefone
-          <span class="required">*</span>
-        </label>
+          <label for="nome">
+            Nome <span class="required">*</span>
+          </label>
 
-        <input
-          id="telefone"
-          class="phone-input"
-          type="tel"
-          required
-          inputmode="numeric"
-          autocomplete="tel"
-          placeholder="(   ) 99999-9999"
-          maxlength="15"
-        >
+          <input
+            id="nome"
+            type="text"
+            required
+            autocomplete="name"
+            placeholder="Digite seu nome"
+          >
 
-        <label for="endereco">
-          Endereço
-          <span class="required">*</span>
-        </label>
+        </div>
 
-        <input
-          id="endereco"
-          type="text"
-          required
-          autocomplete="street-address"
-          placeholder="Digite seu endereço"
-        >
+        <!-- TELEFONE -->
 
-        <label for="claro">
-          Você possui Claro?
-        </label>
+        <div class="field">
 
-        <select id="claro">
+          <label for="telefone">
+            Telefone <span class="required">*</span>
+          </label>
 
-          <option value="">
-            Selecione
-          </option>
+          <input
+            id="telefone"
+            class="phone-input"
+            type="tel"
+            required
+            inputmode="numeric"
+            autocomplete="tel"
+            placeholder="(   ) 99999-9999"
+            maxlength="15"
+          >
 
-          <option value="Não">
-            Não
-          </option>
+        </div>
 
-          <option value="Internet">
-            Internet
-          </option>
+        <!-- ENDEREÇO -->
 
-          <option value="Celular">
-            Celular
-          </option>
+        <div class="field">
 
-          <option value="TV">
-            TV
-          </option>
+          <label for="endereco">
+            Endereço <span class="required">*</span>
+          </label>
 
-          <option value="Combo">
-            Combo
-          </option>
+          <input
+            id="endereco"
+            type="text"
+            required
+            autocomplete="street-address"
+            placeholder="Digite seu endereço"
+          >
 
-        </select>
+        </div>
 
-        <label for="produto">
-          Produto pesquisado
-          <span class="required">*</span>
-        </label>
+        <!-- POSSUI CLARO -->
 
-        <select id="produto" required>
+        <div class="field">
 
-          <option value="">
-            Selecione
-          </option>
+          <label for="claro">
+            Você possui Claro?
+          </label>
 
-          <option value="Internet">
-            Internet
-          </option>
+          <select id="claro">
 
-          <option value="Celular">
-            Celular
-          </option>
+            <option value="">
+              Selecione
+            </option>
 
-          <option value="TV">
-            TV
-          </option>
+            <option value="Não">
+              Não
+            </option>
 
-          <option value="Combo">
-            Combo
-          </option>
+            <option value="Internet">
+              Internet
+            </option>
 
-        </select>
+            <option value="Celular">
+              Celular
+            </option>
+
+            <option value="TV">
+              TV
+            </option>
+
+            <option value="Combo">
+              Combo
+            </option>
+
+          </select>
+
+        </div>
+
+        <!-- PRODUTO PESQUISADO -->
+
+        <div class="field">
+
+          <label for="produto">
+            Produto pesquisado
+            <span class="required">*</span>
+          </label>
+
+          <select
+            id="produto"
+            required
+          >
+
+            <option value="">
+              Selecione
+            </option>
+
+            <option value="Internet">
+              Internet
+            </option>
+
+            <option value="Celular">
+              Celular
+            </option>
+
+            <option value="TV">
+              TV
+            </option>
+
+            <option value="Combo">
+              Combo
+            </option>
+
+          </select>
+
+        </div>
+
+        <!-- BOTÃO -->
 
         <button
           id="submitButton"
@@ -631,29 +739,32 @@ Produto Pesquisado: ${productSearched}`;
 
       </form>
 
-    </div>
+    </section>
 
-    <div class="footer">
-      Claro | Porta a Porta
-    </div>
-
-  </div>
+  </main>
 
 <script>
 
+  // ============================================================
+  // MÁSCARA DE TELEFONE
+  //
+  // DDD OPCIONAL.
+  //
+  // 8 dígitos:
+  // 9999-9999
+  //
+  // 9 dígitos:
+  // 99999-9999
+  //
+  // 10 dígitos:
+  // (99) 9999-9999
+  //
+  // 11 dígitos:
+  // (99) 99999-9999
+  // ============================================================
+
   const telefoneInput =
     document.getElementById("telefone");
-
-  // ============================================================
-  // MÁSCARA
-  //
-  // 8 dígitos  -> 9999-9999
-  // 9 dígitos  -> 99999-9999
-  // 10 dígitos -> (99) 9999-9999
-  // 11 dígitos -> (99) 99999-9999
-  //
-  // DDD NÃO É INSERIDO AUTOMATICAMENTE.
-  // ============================================================
 
   telefoneInput.addEventListener(
     "input",
@@ -666,6 +777,7 @@ Produto Pesquisado: ${productSearched}`;
         value = value.substring(0, 11);
       }
 
+      // 0 a 8 dígitos — sem DDD
       if (value.length <= 8) {
 
         if (value.length <= 4) {
@@ -680,6 +792,7 @@ Produto Pesquisado: ${productSearched}`;
         return;
       }
 
+      // 9 dígitos — celular sem DDD
       if (value.length === 9) {
 
         this.value =
@@ -690,6 +803,7 @@ Produto Pesquisado: ${productSearched}`;
         return;
       }
 
+      // 10 dígitos — telefone com DDD
       if (value.length === 10) {
 
         this.value =
@@ -703,6 +817,7 @@ Produto Pesquisado: ${productSearched}`;
         return;
       }
 
+      // 11 dígitos — celular com DDD
       this.value =
         "(" +
         value.substring(0, 2) +
@@ -714,7 +829,7 @@ Produto Pesquisado: ${productSearched}`;
   );
 
   // ============================================================
-  // ENVIO
+  // ENVIO DO FORMULÁRIO
   // ============================================================
 
   document
@@ -761,6 +876,10 @@ Produto Pesquisado: ${productSearched}`;
             .getElementById("produto")
             .value;
 
+        // --------------------------------------------------------
+        // TELEFONE
+        // --------------------------------------------------------
+
         if (
           customerPhone.length < 8 ||
           customerPhone.length > 11
@@ -775,6 +894,10 @@ Produto Pesquisado: ${productSearched}`;
 
           return;
         }
+
+        // --------------------------------------------------------
+        // POST
+        // --------------------------------------------------------
 
         try {
 
@@ -796,18 +919,19 @@ Produto Pesquisado: ${productSearched}`;
                       window.location.search
                     ).get("vendedor") || "",
 
-                  name,
+                  name: name,
 
                   customer_phone:
                     customerPhone,
 
-                  address,
+                  address: address,
 
                   has_claro:
                     hasClaro,
 
                   product_searched:
                     productSearched
+
                 })
               }
             );
@@ -816,18 +940,20 @@ Produto Pesquisado: ${productSearched}`;
             await response.json();
 
           if (!response.ok) {
+
             throw new Error(
               result.error ||
               "Não foi possível registrar o lead."
             );
+
           }
 
-          // Lead salvo primeiro.
+          // O lead já foi salvo.
           alert(
             "Lead registrado com sucesso!"
           );
 
-          // Depois abre o WhatsApp.
+          // Agora abre o WhatsApp.
           if (result.whatsapp_url) {
 
             window.location.href =
@@ -851,13 +977,16 @@ Produto Pesquisado: ${productSearched}`;
 
           button.disabled = false;
           button.textContent = "Enviar";
+
         }
+
       }
     );
 
 </script>
 
 </body>
+
 </html>`,
       {
         headers: {
