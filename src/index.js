@@ -442,12 +442,17 @@ export default {
               ? sellerPhone
               : "55" + sellerPhone;
 
-          const whatsappMessage =
-            `Nome: ${name}\n` +
-            `Telefone: ${formatPhone(customerPhone)}\n` +
-            `Endereço: ${address}\n` +
-            `Possui Claro? ${hasClaro || "Não informado"}\n` +
-            `Produto Pesquisado: ${productSearched}`;
+          const possuiTexto =
+  hasClaro === "Internet"
+    ? "Banda Larga"
+    : hasClaro || "Não informado";
+
+const whatsappMessage =
+  `Olá, sou ${name}.\n` +
+  `- Meu telefone é: ${customerPhone}.\n` +
+  `- Meu endereço é: ${address}.\n` +
+  `- Possuo: ${possuiTexto}.\n` +
+  `- Quero saber mais sobre: ${productSearched}.`;
 
           whatsappUrl =
             "https://wa.me/" +
