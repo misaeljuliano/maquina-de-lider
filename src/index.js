@@ -290,9 +290,48 @@ const params = new URLSearchParams(window.location.search);
 const vendedor = params.get("vendedor");
 
 if (vendedor && vendedores[vendedor]) {
-document.getElementById("seller").textContent = vendedores[vendedor];
-document.getElementById("vendedor").value = vendedor;
+  document.getElementById("seller").textContent = vendedores[vendedor];
+  document.getElementById("vendedor").value = vendedor;
 }
+
+document.getElementById("leadForm").addEventListener("submit", async function(event) {
+  event.preventDefault();
+
+  const payload = {
+    vendor: document.getElementById("vendedor").value,
+    name: document.getElementById("nome").value.trim(),
+    address: document.getElementById("endereco").value.trim(),
+    hasClaro: document.getElementById("claro").value,
+    interest: document.getElementById("interesse").value
+  };
+
+  if (!payload.vendor || !payload.name || !payload.address || !payload.interest) {
+    alert("Preencha os campos obrigatórios.");
+    return;
+  }
+
+  try {
+    const response = await fetch(window.location.pathname, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify(payload)
+    });
+
+    const result = await response.json();
+
+    if (!response.ok || !result.success) {
+      throw new Error(result.error || "Erro ao gravar lead.");
+    }
+
+    alert("Lead registrado com sucesso!");
+    document.getElementById("leadForm").reset();
+    document.getElementById("vendedor").value = vendedor || "";
+  } catch (error) {
+    alert(error.message || "Erro ao registrar lead.");
+  }
+});
 </script>
 </body>
 </html>
