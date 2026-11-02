@@ -592,7 +592,7 @@ form.addEventListener(
 
         throw new Error(
   result.details
-    ? `${result.error || "Erro"}: ${result.details}`
+    ? (result.error || "Erro") + ": " + result.details
     : result.error || "Erro ao gravar lead."
 );
 
