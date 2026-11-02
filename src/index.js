@@ -12,7 +12,7 @@ export default {
      * A SERVICE ROLE KEY continua sendo obtida do Secret
      * SUPABASE_SERVICE_ROLE_KEY configurado no Cloudflare.
      */
-
+// Deploy trigger
     const supabaseUrl =
       "https://xmipdjjdtruutcumhrzb.supabase.co";
 
