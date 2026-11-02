@@ -3,6 +3,129 @@ export default {
     const url = new URL(request.url);
     const supabaseUrl = env.SUPABASE_URL;
 const serviceKey = env.SUPABASE_SERVICE_ROLE_KEY;
+        if (request.method === "POST") {
+      try {
+        const data = await request.json();
+
+        const vendor = data.vendor;
+        const name = data.name;
+        const address = data.address;
+        const hasClaro = data.hasClaro;
+        const interest = data.interest;
+
+        if (!vendor || !name || !address || !interest) {
+          return new Response(
+            JSON.stringify({ success: false, error: "Dados obrigatórios não preenchidos." }),
+            {
+              status: 400,
+              headers: { "content-type": "application/json;charset=UTF-8" }
+            }
+          );
+        }
+
+        const sellerResponse = await fetch(
+          `${supabaseUrl}/rest/v1/sellers?slug=eq.${encodeURIComponent(vendor)}&active=eq.true&select=id,region`,
+          {
+            headers: {
+              "apikey": serviceKey,
+              "Authorization": `Bearer ${serviceKey}`
+            }
+          }
+        );
+
+        const sellers = await sellerResponse.json();
+
+        if (!sellers.length) {
+          return new Response(
+            JSON.stringify({ success: false, error: "Vendedor não encontrado." }),
+            {
+              status: 404,
+              headers: { "content-type": "application/json;charset=UTF-8" }
+            }
+          );
+        }
+
+        const seller = sellers[0];
+
+        const temperature =
+          interest === "Agora"
+            ? "HOT"
+            : interest === "Depois"
+              ? "WARM"
+              : "CONSULTA";
+
+        const lead = {
+          seller_id: seller.id,
+          region: seller.region,
+          name,
+          address,
+          has_claro: hasClaro || "Não informado",
+          interest,
+          best_time: null,
+          origin: "QR",
+          temperature,
+          status: "NOVO",
+          next_step: "Realizar contato",
+          submission_id: crypto.randomUUID()
+        };
+
+        const insertResponse = await fetch(
+          `${supabaseUrl}/rest/v1/leads`,
+          {
+            method: "POST",
+            headers: {
+              "apikey": serviceKey,
+              "Authorization": `Bearer ${serviceKey}`,
+              "Content-Type": "application/json",
+              "Prefer": "return=representation"
+            },
+            body: JSON.stringify(lead)
+          }
+        );
+
+        if (!insertResponse.ok) {
+          const errorText = await insertResponse.text();
+
+          return new Response(
+            JSON.stringify({
+              success: false,
+              error: "Erro ao gravar lead.",
+              details: errorText
+            }),
+            {
+              status: 500,
+              headers: { "content-type": "application/json;charset=UTF-8" }
+            }
+          );
+        }
+
+        const savedLead = await insertResponse.json();
+
+        return new Response(
+          JSON.stringify({
+            success: true,
+            lead_id: savedLead[0].id
+          }),
+          {
+            status: 200,
+            headers: { "content-type": "application/json;charset=UTF-8" }
+          }
+        );
+
+      } catch (error) {
+        return new Response(
+          JSON.stringify({
+            success: false,
+            error: "Erro interno.",
+            details: error.message
+          }),
+          {
+            status: 500,
+            headers: { "content-type": "application/json;charset=UTF-8" }
+          }
+        );
+      }
+    }
 
     if (request.method === "GET") {
       return new Response(`<!DOCTYPE html>
