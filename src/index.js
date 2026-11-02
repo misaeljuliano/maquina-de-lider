@@ -7,11 +7,44 @@ export default {
 
     /*
      * ============================================================
-     * POST — RECEBER E GRAVAR LEAD
+     * POST - RECEIVE AND SAVE LEAD
      * ============================================================
      */
     if (request.method === "POST") {
       try {
+        /*
+         * Validate Supabase configuration
+         */
+        if (!supabaseUrl) {
+          return new Response(
+            JSON.stringify({
+              success: false,
+              error: "SUPABASE_URL não configurada no Worker."
+            }),
+            {
+              status: 500,
+              headers: {
+                "content-type": "application/json; charset=UTF-8"
+              }
+            }
+          );
+        }
+
+        if (!serviceKey) {
+          return new Response(
+            JSON.stringify({
+              success: false,
+              error: "SUPABASE_SERVICE_ROLE_KEY não configurada no Worker."
+            }),
+            {
+              status: 500,
+              headers: {
+                "content-type": "application/json; charset=UTF-8"
+              }
+            }
+          );
+        }
+
         const data = await request.json();
 
         const vendor = String(data.vendor || "").trim();
@@ -20,16 +53,21 @@ export default {
         const hasClaro = String(data.hasClaro || "").trim();
         const interestRaw = String(data.interest || "").trim();
 
-// Converte o texto do formulário para o ENUM aceito pelo Supabase
-const interest =
-  interestRaw === "Agora"
-    ? "AGORA"
-    : interestRaw === "Depois"
-      ? "DEPOIS"
-      : interestRaw === "Só quero consultar"
-        ? "CONSULTA"
-        : "";
-        // Validação dos campos obrigatórios
+        /*
+         * Convert form values to database enum values
+         */
+        const interest =
+          interestRaw === "Agora"
+            ? "AGORA"
+            : interestRaw === "Depois"
+              ? "DEPOIS"
+              : interestRaw === "Só quero consultar"
+                ? "CONSULTA"
+                : "";
+
+        /*
+         * Validate required fields
+         */
         if (!vendor || !name || !address || !interest) {
           return new Response(
             JSON.stringify({
@@ -46,17 +84,24 @@ const interest =
         }
 
         /*
-         * Busca o vendedor pelo slug.
-         * O telefone não é enviado para o navegador.
+         * ========================================================
+         * FIND SELLER
+         * ========================================================
          */
+
+        const sellerUrl =
+          supabaseUrl +
+          "/rest/v1/sellers?slug=eq." +
+          encodeURIComponent(vendor) +
+          "&active=eq.true&select=id,slug,name,region,phone";
+
         const sellerResponse = await fetch(
-          `${supabaseUrl}/rest/v1/sellers?slug=eq.${encodeURIComponent(
-            vendor
-          )}&active=eq.true&select=id,slug,name,region,phone`,
+          sellerUrl,
           {
+            method: "GET",
             headers: {
               apikey: serviceKey,
-              Authorization: `Bearer ${serviceKey}`
+              Authorization: "Bearer " + serviceKey
             }
           }
         );
@@ -64,12 +109,16 @@ const interest =
         if (!sellerResponse.ok) {
           const sellerError = await sellerResponse.text();
 
-          console.error("Erro ao consultar vendedor:", sellerError);
+          console.error(
+            "Error querying seller:",
+            sellerError
+          );
 
           return new Response(
             JSON.stringify({
               success: false,
-              error: "Não foi possível validar o vendedor."
+              error: "Não foi possível validar o vendedor.",
+              details: sellerError
             }),
             {
               status: 500,
@@ -82,7 +131,7 @@ const interest =
 
         const sellers = await sellerResponse.json();
 
-        if (!sellers.length) {
+        if (!Array.isArray(sellers) || sellers.length === 0) {
           return new Response(
             JSON.stringify({
               success: false,
@@ -100,22 +149,24 @@ const interest =
         const seller = sellers[0];
 
         /*
-         * Classificação da temperatura
+         * ========================================================
+         * LEAD TEMPERATURE
+         * ========================================================
          */
+
         const temperature =
-  interest === "AGORA"
-    ? "HOT"
-    : interest === "DEPOIS"
-      ? "WARM"
-      : "CONSULTA";
+          interest === "AGORA"
+            ? "HOT"
+            : interest === "DEPOIS"
+              ? "WARM"
+              : "CONSULTA";
+
         /*
          * ========================================================
-         * LEAD
-         *
-         * Mantemos somente os campos estruturais já existentes
-         * na tabela leads para evitar erro por coluna inexistente.
+         * CREATE LEAD
          * ========================================================
          */
+
         const lead = {
           seller_id: seller.id,
           region: seller.region,
@@ -129,15 +180,18 @@ const interest =
         };
 
         /*
-         * Gravação no Supabase
+         * ========================================================
+         * INSERT LEAD INTO SUPABASE
+         * ========================================================
          */
+
         const insertResponse = await fetch(
-          `${supabaseUrl}/rest/v1/leads`,
+          supabaseUrl + "/rest/v1/leads",
           {
             method: "POST",
             headers: {
               apikey: serviceKey,
-              Authorization: `Bearer ${serviceKey}`,
+              Authorization: "Bearer " + serviceKey,
               "Content-Type": "application/json",
               Prefer: "return=representation"
             },
@@ -145,16 +199,19 @@ const interest =
           }
         );
 
-        if (!insertResponse.ok) {
-          const errorText = await insertResponse.text();
+        const responseText = await insertResponse.text();
 
-          console.error("Erro Supabase ao gravar lead:", errorText);
+        if (!insertResponse.ok) {
+          console.error(
+            "Supabase lead insert error:",
+            responseText
+          );
 
           return new Response(
             JSON.stringify({
               success: false,
               error: "Erro ao gravar lead.",
-              details: errorText
+              details: responseText
             }),
             {
               status: 500,
@@ -165,24 +222,37 @@ const interest =
           );
         }
 
-        const responseText = await insertResponse.text();
-let savedLead = [];
+        /*
+         * Parse Supabase response
+         */
+        let savedLead = [];
 
-if (responseText.trim()) {
-  try {
-    savedLead = JSON.parse(responseText);
-  } catch {
-    savedLead = [];
-  }
-}
+        if (responseText.trim()) {
+          try {
+            savedLead = JSON.parse(responseText);
+          } catch (parseError) {
+            console.error(
+              "Could not parse Supabase response:",
+              parseError
+            );
+          }
+        }
 
         /*
-         * Resposta de sucesso
+         * ========================================================
+         * SUCCESS
+         * ========================================================
          */
+
         return new Response(
           JSON.stringify({
             success: true,
-            lead_id: savedLead?.[0]?.id || null,
+            lead_id:
+              Array.isArray(savedLead) &&
+              savedLead[0] &&
+              savedLead[0].id
+                ? savedLead[0].id
+                : null,
             seller: seller.name
           }),
           {
@@ -192,15 +262,23 @@ if (responseText.trim()) {
             }
           }
         );
+
       } catch (error) {
-        console.error("Erro interno:", error);
+        console.error(
+          "Internal error:",
+          error
+        );
 
         return new Response(
-  JSON.stringify({
-    success: false,
-    error: "Erro interno.",
-    details: String(error?.message || error)
-  }),
+          JSON.stringify({
+            success: false,
+            error: "Erro interno.",
+            details: String(
+              error && error.message
+                ? error.message
+                : error
+            )
+          }),
           {
             status: 500,
             headers: {
@@ -213,9 +291,10 @@ if (responseText.trim()) {
 
     /*
      * ============================================================
-     * GET — FORMULÁRIO
+     * GET - FORM
      * ============================================================
      */
+
     if (request.method === "GET") {
       return new Response(
         `<!DOCTYPE html>
@@ -412,12 +491,6 @@ button:disabled {
 
 <script>
 
-/*
- * ============================================================
- * VENDEDORES DO PILOTO — SANTOS
- * ============================================================
- */
-
 const vendedores = {
   "josi-misael": "Josi Misael",
   "mauricio-fuertes": "Maurício Fuertes",
@@ -431,20 +504,13 @@ const vendedores = {
   "guilherme-santos": "Guilherme Santos"
 };
 
-/*
- * ============================================================
- * IDENTIFICAÇÃO DO VENDEDOR PELO QR CODE
- * Exemplo:
- *
- * https://maquinadelider.com.br/?vendedor=josi-misael
- * ============================================================
- */
+const params =
+  new URLSearchParams(
+    window.location.search
+  );
 
-const params = new URLSearchParams(
-  window.location.search
-);
-
-const vendedor = params.get("vendedor");
+const vendedor =
+  params.get("vendedor");
 
 const sellerElement =
   document.getElementById("seller");
@@ -458,12 +524,10 @@ const form =
 const submitButton =
   document.getElementById("submitButton");
 
-
-/*
- * Validação do vendedor
- */
-
-if (vendedor && vendedores[vendedor]) {
+if (
+  vendedor &&
+  vendedores[vendedor]
+) {
 
   sellerElement.textContent =
     vendedores[vendedor];
@@ -478,23 +542,16 @@ if (vendedor && vendedores[vendedor]) {
 
 }
 
-
-/*
- * ============================================================
- * ENVIO DO LEAD
- * ============================================================
- */
-
 form.addEventListener(
   "submit",
   async function(event) {
 
     event.preventDefault();
 
-    /*
-     * O vendedor precisa estar identificado
-     */
-    if (!vendedor || !vendedores[vendedor]) {
+    if (
+      !vendedor ||
+      !vendedores[vendedor]
+    ) {
 
       alert(
         "Vendedor não identificado. " +
@@ -533,11 +590,6 @@ form.addEventListener(
 
     };
 
-
-    /*
-     * Validação no navegador
-     */
-
     if (
       !payload.vendor ||
       !payload.name ||
@@ -552,38 +604,31 @@ form.addEventListener(
       return;
     }
 
-
-    /*
-     * Evita duplo clique
-     */
-
     submitButton.disabled = true;
 
     submitButton.textContent =
       "Registrando...";
 
-
     try {
 
-      const response = await fetch(
-        window.location.pathname,
-        {
-          method: "POST",
+      const response =
+        await fetch(
+          window.location.pathname,
+          {
+            method: "POST",
 
-          headers: {
-            "Content-Type":
-              "application/json"
-          },
+            headers: {
+              "Content-Type":
+                "application/json"
+            },
 
-          body:
-            JSON.stringify(payload)
-        }
-      );
-
+            body:
+              JSON.stringify(payload)
+          }
+        );
 
       const result =
         await response.json();
-
 
       if (
         !response.ok ||
@@ -591,41 +636,34 @@ form.addEventListener(
       ) {
 
         throw new Error(
-  result.details
-    ? (result.error || "Erro") + ": " + result.details
-    : result.error || "Erro ao gravar lead."
-);
+          result.details
+            ? (result.error || "Erro") +
+              ": " +
+              result.details
+            : result.error ||
+              "Erro ao gravar lead."
+        );
 
       }
-
-
-      /*
-       * Sucesso
-       */
 
       alert(
         "Lead registrado com sucesso!"
       );
 
-
       form.reset();
-
-
-      /*
-       * Mantém o vendedor identificado
-       */
 
       vendedorInput.value =
         vendedor;
 
-
       sellerElement.textContent =
         vendedores[vendedor];
 
-
     } catch (error) {
 
-      console.error(error);
+      console.error(
+        "Lead submission error:",
+        error
+      );
 
       alert(
         error.message ||
@@ -634,7 +672,8 @@ form.addEventListener(
 
     } finally {
 
-      submitButton.disabled = false;
+      submitButton.disabled =
+        false;
 
       submitButton.textContent =
         "Quero saber mais";
@@ -658,10 +697,9 @@ form.addEventListener(
       );
     }
 
-
     /*
      * ============================================================
-     * OUTROS MÉTODOS
+     * OTHER METHODS
      * ============================================================
      */
 
