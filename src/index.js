@@ -18,8 +18,17 @@ export default {
         const name = String(data.name || "").trim();
         const address = String(data.address || "").trim();
         const hasClaro = String(data.hasClaro || "").trim();
-        const interest = String(data.interest || "").trim();
+        const interestRaw = String(data.interest || "").trim();
 
+// Converte o texto do formulário para o ENUM aceito pelo Supabase
+const interest =
+  interestRaw === "Agora"
+    ? "AGORA"
+    : interestRaw === "Depois"
+      ? "DEPOIS"
+      : interestRaw === "Só quero consultar"
+        ? "CONSULTA"
+        : "";
         // Validação dos campos obrigatórios
         if (!vendor || !name || !address || !interest) {
           return new Response(
@@ -94,12 +103,11 @@ export default {
          * Classificação da temperatura
          */
         const temperature =
-          interest === "Agora"
-            ? "HOT"
-            : interest === "Depois"
-              ? "WARM"
-              : "CONSULTA";
-
+  interest === "AGORA"
+    ? "HOT"
+    : interest === "DEPOIS"
+      ? "WARM"
+      : "CONSULTA";
         /*
          * ========================================================
          * LEAD
