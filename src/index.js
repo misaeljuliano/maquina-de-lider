@@ -109,7 +109,7 @@ button:active {
     </div>
 
     <form id="leadForm">
-
+<input type="hidden" id="vendedor" name="vendedor">
       <label>
         Nome <span class="required">*</span>
       </label>
@@ -166,6 +166,7 @@ const vendedor = params.get("vendedor");
 
 if (vendedor && vendedores[vendedor]) {
 document.getElementById("seller").textContent = vendedores[vendedor];
+document.getElementById("vendedor").value = vendedor;
 }
 </script>
 </body>
