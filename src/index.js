@@ -196,11 +196,11 @@ if (responseText.trim()) {
         console.error("Erro interno:", error);
 
         return new Response(
-          JSON.stringify({
-            success: false,
-            error: "Erro interno.",
-            details: error.message
-          }),
+  JSON.stringify({
+    success: false,
+    error: "Erro interno.",
+    details: String(error?.message || error)
+  }),
           {
             status: 500,
             headers: {
@@ -591,9 +591,10 @@ form.addEventListener(
       ) {
 
         throw new Error(
-          result.error ||
-          "Erro ao gravar lead."
-        );
+  result.details
+    ? `${result.error || "Erro"}: ${result.details}`
+    : result.error || "Erro ao gravar lead."
+);
 
       }
 
