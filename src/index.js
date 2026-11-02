@@ -6,13 +6,8 @@ export default {
      * ============================================================
      * SUPABASE CONFIGURATION
      * ============================================================
-     *
-     * A URL do projeto não é segredo e fica fixa no Worker.
-     *
-     * A SERVICE ROLE KEY continua sendo obtida do Secret
-     * SUPABASE_SERVICE_ROLE_KEY configurado no Cloudflare.
      */
-// Deploy trigger
+
     const supabaseUrl =
       "https://xmipdjjdtruutcumhrzb.supabase.co";
 
@@ -27,10 +22,6 @@ export default {
 
     if (request.method === "POST") {
       try {
-        /*
-         * Validate Supabase service key
-         */
-
         if (!serviceKey) {
           return new Response(
             JSON.stringify({
@@ -58,45 +49,55 @@ export default {
           await request.json();
 
         const vendor =
-          String(
-            data.vendor || ""
-          ).trim();
+          String(data.vendor || "").trim();
 
         const name =
-          String(
-            data.name || ""
-          ).trim();
+          String(data.name || "").trim();
 
         const address =
-          String(
-            data.address || ""
-          ).trim();
+          String(data.address || "").trim();
 
         const hasClaro =
-          String(
-            data.hasClaro || ""
-          ).trim();
+          String(data.hasClaro || "").trim();
 
-        const interestRaw =
+        const productSearched =
           String(
-            data.interest || ""
+            data.product_searched || ""
           ).trim();
 
         /*
          * ========================================================
-         * CONVERT FORM VALUES TO DATABASE ENUM VALUES
+         * VALIDATE PRODUCT
          * ========================================================
          */
 
-        const interest =
-          interestRaw === "Agora"
-            ? "AGORA"
-            : interestRaw === "Depois"
-              ? "DEPOIS"
-              : interestRaw ===
-                  "Só quero consultar"
-                ? "CONSULTA"
-                : "";
+        const validProducts = [
+          "Internet",
+          "Celular",
+          "TV",
+          "Combo"
+        ];
+
+        if (
+          !validProducts.includes(
+            productSearched
+          )
+        ) {
+          return new Response(
+            JSON.stringify({
+              success: false,
+              error:
+                "Selecione o produto pesquisado."
+            }),
+            {
+              status: 400,
+              headers: {
+                "content-type":
+                  "application/json; charset=UTF-8"
+              }
+            }
+          );
+        }
 
         /*
          * ========================================================
@@ -107,8 +108,7 @@ export default {
         if (
           !vendor ||
           !name ||
-          !address ||
-          !interest
+          !address
         ) {
           return new Response(
             JSON.stringify({
@@ -146,8 +146,7 @@ export default {
               headers: {
                 apikey: serviceKey,
                 Authorization:
-                  "Bearer " +
-                  serviceKey
+                  "Bearer " + serviceKey
               }
             }
           );
@@ -207,19 +206,6 @@ export default {
 
         /*
          * ========================================================
-         * LEAD TEMPERATURE
-         * ========================================================
-         */
-
-        const temperature =
-          interest === "AGORA"
-            ? "HOT"
-            : interest === "DEPOIS"
-              ? "WARM"
-              : "CONSULTA";
-
-        /*
-         * ========================================================
          * CREATE LEAD
          * ========================================================
          */
@@ -241,11 +227,8 @@ export default {
             hasClaro ||
             "Não informado",
 
-          interest:
-            interest,
-
-          temperature:
-            temperature,
+          product_searched:
+            productSearched,
 
           status:
             "NOVO",
@@ -348,6 +331,43 @@ export default {
 
         /*
          * ========================================================
+         * PREPARE WHATSAPP
+         * ========================================================
+         */
+
+        const sellerPhone =
+          String(
+            seller.phone || ""
+          ).replace(
+            /\D/g,
+            ""
+          );
+
+        let whatsappUrl =
+          "";
+
+        if (sellerPhone) {
+          const whatsappPhone =
+            sellerPhone.startsWith("55")
+              ? sellerPhone
+              : "55" + sellerPhone;
+
+          const whatsappMessage =
+            `Olá, sou ${name}. ` +
+            `Quero saber mais sobre ${productSearched}. ` +
+            `Meu endereço é ${address}.`;
+
+          whatsappUrl =
+            "https://wa.me/" +
+            whatsappPhone +
+            "?text=" +
+            encodeURIComponent(
+              whatsappMessage
+            );
+        }
+
+        /*
+         * ========================================================
          * SUCCESS
          * ========================================================
          */
@@ -367,7 +387,10 @@ export default {
                 : null,
 
             seller:
-              seller.name
+              seller.name,
+
+            whatsapp_url:
+              whatsappUrl
           }),
           {
             status: 200,
@@ -379,12 +402,6 @@ export default {
         );
 
       } catch (error) {
-        /*
-         * ========================================================
-         * INTERNAL ERROR
-         * ========================================================
-         */
-
         console.error(
           "Internal error:",
           error
@@ -437,7 +454,7 @@ export default {
   content="width=device-width, initial-scale=1.0"
 >
 
-<title>Máquina de Líder</title>
+<title>Claro | Porta a Porta</title>
 
 <style>
 
@@ -469,12 +486,14 @@ body {
 
 h1 {
   margin: 0 0 8px;
-  font-size: 28px;
+  font-size: 30px;
+  color: #e30613;
 }
 
 .subtitle {
   color: #666;
   margin-bottom: 24px;
+  font-size: 16px;
 }
 
 label {
@@ -500,10 +519,11 @@ button {
   padding: 16px;
   border: 0;
   border-radius: 10px;
-  background: #111;
+  background: #e30613;
   color: white;
   font-size: 17px;
   font-weight: bold;
+  cursor: pointer;
 }
 
 button:active {
@@ -537,11 +557,11 @@ button:disabled {
   <div class="card">
 
     <h1>
-      Máquina de Líder
+      Claro
     </h1>
 
     <div class="subtitle">
-      Atendimento Claro
+      Porta a Porta
     </div>
 
     <div class="seller">
@@ -618,7 +638,7 @@ button:disabled {
 
       <label>
 
-        Qual seu interesse?
+        Produto pesquisado
 
         <span class="required">
           *
@@ -627,7 +647,7 @@ button:disabled {
       </label>
 
       <select
-        id="interesse"
+        id="produto"
         required
       >
 
@@ -635,16 +655,20 @@ button:disabled {
           Selecione
         </option>
 
-        <option value="Agora">
-          Agora
+        <option value="Internet">
+          Internet
         </option>
 
-        <option value="Depois">
-          Depois
+        <option value="Celular">
+          Celular
         </option>
 
-        <option value="Só quero consultar">
-          Só quero consultar
+        <option value="TV">
+          TV
+        </option>
+
+        <option value="Combo">
+          Combo
         </option>
 
       </select>
@@ -653,7 +677,7 @@ button:disabled {
         id="submitButton"
         type="submit"
       >
-        Quero saber mais
+        Enviar
       </button>
 
     </form>
@@ -786,9 +810,9 @@ form.addEventListener(
           .getElementById("claro")
           .value,
 
-      interest:
+      product_searched:
         document
-          .getElementById("interesse")
+          .getElementById("produto")
           .value
 
     };
@@ -797,7 +821,7 @@ form.addEventListener(
       !payload.vendor ||
       !payload.name ||
       !payload.address ||
-      !payload.interest
+      !payload.product_searched
     ) {
 
       alert(
@@ -812,7 +836,7 @@ form.addEventListener(
       true;
 
     submitButton.textContent =
-      "Registrando...";
+      "Enviando...";
 
     try {
 
@@ -865,13 +889,30 @@ form.addEventListener(
         "Lead registrado com sucesso!"
       );
 
-      form.reset();
+      /*
+       * ==========================================================
+       * OPEN SELLER WHATSAPP
+       * ==========================================================
+       */
 
-      vendedorInput.value =
-        vendedor;
+      if (
+        result.whatsapp_url
+      ) {
 
-      sellerElement.textContent =
-        vendedores[vendedor];
+        window.location.href =
+          result.whatsapp_url;
+
+      } else {
+
+        form.reset();
+
+        vendedorInput.value =
+          vendedor;
+
+        sellerElement.textContent =
+          vendedores[vendedor];
+
+      }
 
     } catch (error) {
 
@@ -891,7 +932,7 @@ form.addEventListener(
         false;
 
       submitButton.textContent =
-        "Quero saber mais";
+        "Enviar";
 
     }
 
@@ -910,7 +951,6 @@ form.addEventListener(
             "content-type":
               "text/html; charset=UTF-8"
           }
-
         }
       );
     }
