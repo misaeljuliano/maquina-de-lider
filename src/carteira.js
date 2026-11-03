@@ -122,6 +122,24 @@ body{
   font-size:13px
 }
 
+.link-button{
+  border:0;
+  padding:0;
+  margin-top:14px;
+  background:transparent;
+  color:#b00000;
+  font:inherit;
+  font-weight:700;
+  text-decoration:underline;
+  cursor:pointer
+}
+
+.auth-panel{
+  margin-top:18px;
+  padding-top:16px;
+  border-top:1px solid #eee
+}
+
 .stats{
   display:grid;
   grid-template-columns:repeat(4,1fr);
@@ -242,6 +260,7 @@ th{
     Entre com seu usuário corporativo.
   </div>
 
+  <div id="loginForm">
   <div class="field">
     <label>E-mail</label>
     <input
@@ -263,6 +282,36 @@ th{
   <button class="btn" id="loginBtn">
     Entrar
   </button>
+
+  <div>
+    <button class="link-button" id="showResetBtn" type="button">
+      Primeiro acesso ou esqueci minha senha
+    </button>
+  </div>
+  </div>
+
+  <div id="resetPanel" class="auth-panel hidden">
+    <h2 class="h">Criar ou recuperar senha</h2>
+    <p class="muted">Enviaremos um link para o e-mail informado. Abra o link neste dispositivo para cadastrar uma nova senha.</p>
+    <button class="btn" id="resetBtn" type="button">Enviar link por e-mail</button>
+    <div id="resetMessage" class="muted" role="status" aria-live="polite"></div>
+    <div id="resetError" class="error" role="alert"></div>
+    <button class="link-button" id="cancelResetBtn" type="button">Voltar para entrar</button>
+  </div>
+
+  <div id="passwordPanel" class="auth-panel hidden">
+    <h2 class="h">Defina sua nova senha</h2>
+    <div class="field">
+      <label for="newPassword">Nova senha</label>
+      <input id="newPassword" type="password" autocomplete="new-password" minlength="8">
+    </div>
+    <div class="field">
+      <label for="confirmPassword">Confirme a nova senha</label>
+      <input id="confirmPassword" type="password" autocomplete="new-password" minlength="8">
+    </div>
+    <button class="btn" id="savePasswordBtn" type="button">Salvar senha</button>
+    <div id="passwordError" class="error" role="alert"></div>
+  </div>
 
   <div id="loginError" class="error"></div>
 
@@ -774,6 +823,89 @@ async function login() {
 }
 
 
+function showPasswordPanel() {
+  $("loginForm").classList.add("hidden");
+  $("resetPanel").classList.add("hidden");
+  $("passwordPanel").classList.remove("hidden");
+  $("loginError").textContent = "";
+}
+
+
+async function sendPasswordLink() {
+  $("resetError").textContent = "";
+  $("resetMessage").textContent = "";
+
+  const email = $("email").value.trim();
+  if (!email) {
+    $("resetError").textContent = "Informe seu e-mail corporativo para receber o link.";
+    $("email").focus();
+    return;
+  }
+
+  $("resetBtn").disabled = true;
+  $("resetBtn").textContent = "Enviando...";
+
+  let error;
+  try {
+    ({ error } = await client.auth.resetPasswordForEmail(email, {
+      redirectTo: window.location.origin + "/carteira"
+    }));
+  } catch (requestError) {
+    error = requestError;
+  }
+
+  $("resetBtn").disabled = false;
+  $("resetBtn").textContent = "Enviar link por e-mail";
+
+  if (error) {
+    $("resetError").textContent = "Não foi possível enviar o link. Confira o e-mail e tente novamente.";
+    console.error(error);
+    return;
+  }
+
+  $("resetMessage").textContent = "Se houver uma conta para esse e-mail, enviaremos um link para criar ou redefinir a senha.";
+}
+
+
+async function savePassword() {
+  const password = $("newPassword").value;
+  const confirmation = $("confirmPassword").value;
+  $("passwordError").textContent = "";
+
+  if (password.length < 8) {
+    $("passwordError").textContent = "A senha deve ter pelo menos 8 caracteres.";
+    return;
+  }
+
+  if (password !== confirmation) {
+    $("passwordError").textContent = "As senhas não conferem.";
+    return;
+  }
+
+  $("savePasswordBtn").disabled = true;
+  $("savePasswordBtn").textContent = "Salvando...";
+
+  let error;
+  try {
+    ({ error } = await client.auth.updateUser({ password }));
+  } catch (requestError) {
+    error = requestError;
+  }
+
+  $("savePasswordBtn").disabled = false;
+  $("savePasswordBtn").textContent = "Salvar senha";
+
+  if (error) {
+    $("passwordError").textContent = "Não foi possível salvar a senha. Confirme os requisitos e, se necessário, solicite outro link.";
+    console.error(error);
+    return;
+  }
+
+  window.history.replaceState({}, document.title, window.location.pathname);
+  await showApp();
+}
+
+
 async function showApp() {
 
   const {
@@ -814,6 +946,31 @@ async function showApp() {
 
 $("loginBtn")
   .onclick = login;
+
+
+$("showResetBtn").onclick = () => {
+  $("loginForm").classList.add("hidden");
+  $("resetPanel").classList.remove("hidden");
+  $("resetError").textContent = "";
+  $("resetMessage").textContent = "";
+};
+
+
+$("cancelResetBtn").onclick = () => {
+  $("resetPanel").classList.add("hidden");
+  $("loginForm").classList.remove("hidden");
+};
+
+
+$("resetBtn").onclick = sendPasswordLink;
+$("savePasswordBtn").onclick = savePassword;
+
+
+client.auth.onAuthStateChange((event) => {
+  if (event === "PASSWORD_RECOVERY") {
+    showPasswordPanel();
+  }
+});
 
 
 $("password")
@@ -864,13 +1021,17 @@ $("logoutBtn")
 
 (async () => {
 
+  const recovery = new URLSearchParams(window.location.hash.slice(1)).get("type") === "recovery";
+
   const {
     data
   } =
     await client.auth.getSession();
 
 
-  if (data.session) {
+  if (recovery) {
+    showPasswordPanel();
+  } else if (data.session) {
 
     showApp();
 
