@@ -20,7 +20,7 @@ function page() {
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Minha Carteira | Máquina de Líder</title>
 
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.105.4/dist/umd/supabase.js"></script>
 
 <style>
 *{box-sizing:border-box}
@@ -470,6 +470,14 @@ th{
 
 <script>
 
+// Keep the recovery panel usable even if the external SDK fails to load.
+document.getElementById("showResetBtn").addEventListener("click", () => {
+  document.getElementById("loginForm").classList.add("hidden");
+  document.getElementById("resetPanel").classList.remove("hidden");
+  document.getElementById("resetError").textContent = "";
+  document.getElementById("resetMessage").textContent = "";
+});
+
 const {
   createClient
 } = supabase;
@@ -712,7 +720,7 @@ function render() {
 
     $("rows").innerHTML =
       "<tr>" +
-      "<td colspan=\"7\" class=\"empty\">" +
+      "<td colspan=\\\"7\\\" class=\\\"empty\\\">" +
       "Nenhum lead encontrado na sua carteira." +
       "</td>" +
       "</tr>";
@@ -751,7 +759,7 @@ function render() {
         "</td>" +
 
         "<td>" +
-          "<span class=\"pill\">" +
+          "<span class=\\\"pill\\\">" +
             escapeHtml(
               lead.product_searched
             ) +
@@ -946,14 +954,6 @@ async function showApp() {
 
 $("loginBtn")
   .onclick = login;
-
-
-$("showResetBtn").onclick = () => {
-  $("loginForm").classList.add("hidden");
-  $("resetPanel").classList.remove("hidden");
-  $("resetError").textContent = "";
-  $("resetMessage").textContent = "";
-};
 
 
 $("cancelResetBtn").onclick = () => {
