@@ -651,19 +651,22 @@ function render() {
     ).length;
 
 
+  /*
+   * CORREÇÃO:
+   * Não utilizamos template literals dentro
+   * do template literal principal de page().
+   * Isso evita o erro:
+   * "Unterminated regular expression".
+   */
+
   if (!filtered.length) {
 
-    $("rows").innerHTML = `
-      <tr>
-        <td
-          colspan="7"
-          class="empty"
-        >
-          Nenhum lead encontrado
-          na sua carteira.
-        </td>
-      </tr>
-    `;
+    $("rows").innerHTML =
+      "<tr>" +
+      "<td colspan=\"7\" class=\"empty\">" +
+      "Nenhum lead encontrado na sua carteira." +
+      "</td>" +
+      "</tr>";
 
     return;
 
@@ -671,61 +674,57 @@ function render() {
 
 
   $("rows").innerHTML =
-    filtered.map(lead => `
+    filtered.map(lead =>
+      "<tr>" +
 
-      <tr>
+        "<td><b>" +
+          escapeHtml(lead.name) +
+        "</b></td>" +
 
-        <td>
-          <b>
-            ${escapeHtml(lead.name)}
-          </b>
-        </td>
-
-        <td>
-          ${escapeHtml(
+        "<td>" +
+          escapeHtml(
             formatPhone(
               lead.customer_phone
             )
-          )}
-        </td>
+          ) +
+        "</td>" +
 
-        <td>
-          ${escapeHtml(
+        "<td>" +
+          escapeHtml(
             lead.address
-          )}
-        </td>
+          ) +
+        "</td>" +
 
-        <td>
-          ${escapeHtml(
+        "<td>" +
+          escapeHtml(
             lead.has_claro
-          )}
-        </td>
+          ) +
+        "</td>" +
 
-        <td>
-          <span class="pill">
-            ${escapeHtml(
+        "<td>" +
+          "<span class=\"pill\">" +
+            escapeHtml(
               lead.product_searched
-            )}
-          </span>
-        </td>
+            ) +
+          "</span>" +
+        "</td>" +
 
-        <td>
-          ${escapeHtml(
+        "<td>" +
+          escapeHtml(
             formatDate(
               lead.created_at
             )
-          )}
-        </td>
+          ) +
+        "</td>" +
 
-        <td>
-          ${escapeHtml(
+        "<td>" +
+          escapeHtml(
             lead.status
-          )}
-        </td>
+          ) +
+        "</td>" +
 
-      </tr>
-
-    `).join("");
+      "</tr>"
+    ).join("");
 
 }
 
