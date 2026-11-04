@@ -1,4 +1,4 @@
 name = "maquina-de-lider"
 main = "src/carteira.js"
 compatibility_date = "2026-11-01"
-previews = { }
+previews = { vars = { SUPABASE_URL = "https://hmlinyowvggqpqgzbuhw.supabase.co" } }
