@@ -142,3 +142,16 @@ test("public form creates a submission UUID once and keeps it through failed ret
   assert.ok(catchBlock > clearAfterSuccess);
   assert.equal(html.slice(catchBlock).includes("pendingSubmissionId = null"), false);
 });
+test("configured Supabase URL is used for preview environments", async (t) => {
+  const originalFetch = globalThis.fetch;
+  t.after(() => { globalThis.fetch = originalFetch; });
+  const table = { current: null };
+  const calls = mockFetch(table);
+  const response = await worker.fetch(request(), {
+    SUPABASE_SERVICE_ROLE_KEY: "test-key",
+    SUPABASE_URL: "https://staging-project.supabase.co/"
+  });
+
+  assert.equal(response.status, 200);
+  assert.ok(calls.every(call => call.url.startsWith("https://staging-project.supabase.co/rest/v1/")));
+});
