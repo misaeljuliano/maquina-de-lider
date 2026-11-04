@@ -9,7 +9,10 @@ export default {
      */
 
     const supabaseUrl =
-      "https://xmipdjjdtruutcumhrzb.supabase.co";
+      String(
+        env.SUPABASE_URL ||
+          "https://xmipdjjdtruutcumhrzb.supabase.co"
+      ).replace(/\/+$/, "");
 
     const serviceKey =
       env.SUPABASE_SERVICE_ROLE_KEY;
