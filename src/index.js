@@ -103,6 +103,28 @@ export default {
         const data =
           await request.json();
 
+        const submissionId =
+          typeof data.submission_id === "string"
+            ? data.submission_id.trim()
+            : "";
+
+        if (
+          !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(submissionId)
+        ) {
+          return new Response(
+            JSON.stringify({
+              success: false,
+              error: "Identificador da solicitação inválido."
+            }),
+            {
+              status: 400,
+              headers: {
+                "content-type": "application/json; charset=UTF-8"
+              }
+            }
+          );
+        }
+
         const vendor =
           String(data.vendor || "").trim();
 
@@ -324,7 +346,7 @@ export default {
             "NOVO",
 
           submission_id:
-            crypto.randomUUID()
+            submissionId
         };
 
         /*
@@ -336,7 +358,7 @@ export default {
         const insertResponse =
           await fetch(
             supabaseUrl +
-              "/rest/v1/leads",
+              "/rest/v1/leads?on_conflict=submission_id",
             {
               method: "POST",
 
@@ -352,7 +374,7 @@ export default {
                   "application/json",
 
                 Prefer:
-                  "return=representation"
+                  "resolution=ignore-duplicates,return=representation"
               },
 
               body:
@@ -417,6 +439,79 @@ export default {
               parseError
             );
           }
+        }
+
+        // With resolution=ignore-duplicates, PostgREST returns an empty array
+        // on a UNIQUE conflict. Read the winning row only after that atomic
+        // insert decision has completed.
+        if (!Array.isArray(savedLead) || savedLead.length === 0) {
+          const existingResponse = await fetch(
+            supabaseUrl +
+              "/rest/v1/leads?submission_id=eq." +
+              encodeURIComponent(submissionId) +
+              "&select=id,seller_id,name,customer_phone,address,has_claro,product_searched,submission_id",
+            {
+              method: "GET",
+              headers: {
+                apikey: serviceKey,
+                Authorization: "Bearer " + serviceKey
+              }
+            }
+          );
+
+          if (!existingResponse.ok) {
+            const existingError = await existingResponse.text();
+            console.error("Supabase lead lookup error:", existingError);
+            return new Response(
+              JSON.stringify({
+                success: false,
+                error: "Não foi possível confirmar o lead enviado."
+              }),
+              {
+                status: 500,
+                headers: { "content-type": "application/json; charset=UTF-8" }
+              }
+            );
+          }
+
+          const existingLeads = await existingResponse.json();
+          const existingLead = Array.isArray(existingLeads) ? existingLeads[0] : null;
+          if (!existingLead) {
+            return new Response(
+              JSON.stringify({
+                success: false,
+                error: "Não foi possível confirmar o lead enviado."
+              }),
+              {
+                status: 500,
+                headers: { "content-type": "application/json; charset=UTF-8" }
+              }
+            );
+          }
+
+          const samePayload =
+            existingLead.submission_id === submissionId &&
+            existingLead.seller_id === lead.seller_id &&
+            existingLead.name === lead.name &&
+            existingLead.customer_phone === lead.customer_phone &&
+            existingLead.address === lead.address &&
+            existingLead.has_claro === lead.has_claro &&
+            existingLead.product_searched === lead.product_searched;
+
+          if (!samePayload) {
+            return new Response(
+              JSON.stringify({
+                success: false,
+                error: "Esta solicitação já foi usada com dados diferentes."
+              }),
+              {
+                status: 409,
+                headers: { "content-type": "application/json; charset=UTF-8" }
+              }
+            );
+          }
+
+          savedLead = [existingLead];
         }
 
         /*
@@ -875,6 +970,9 @@ const submitButton =
     "submitButton"
   );
 
+// Keep one key for retries until a submission is confirmed successful.
+let pendingSubmissionId = null;
+
 if (
   vendedor &&
   vendedores[vendedor]
@@ -1084,6 +1182,12 @@ form.addEventListener(
 
     }
 
+    if (!pendingSubmissionId) {
+      pendingSubmissionId = crypto.randomUUID();
+    }
+
+    payload.submission_id = pendingSubmissionId;
+
     submitButton.disabled =
       true;
 
@@ -1145,6 +1249,8 @@ form.addEventListener(
        */
 
       form.reset();
+
+      pendingSubmissionId = null;
 
       vendedorInput.value =
         vendedor;
