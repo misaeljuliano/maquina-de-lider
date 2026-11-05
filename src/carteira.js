@@ -440,6 +440,8 @@ th{
       class="error"
     ></div>
 
+    <div id="managerMessage" class="muted" role="status" aria-live="polite"></div>
+
 
     <div class="table-wrap">
 
@@ -456,6 +458,8 @@ th{
             <th>Produto de interesse</th>
             <th>Data/Hora</th>
             <th>Status</th>
+            <th id="managerObservationHeader" class="hidden">Observação</th>
+            <th id="managerCrmHeader" class="hidden">ID no CRM</th>
 
           </tr>
 
@@ -499,6 +503,7 @@ const client = createClient(
 
 
 let leads = [];
+let isManager = false;
 
 
 const $ = id =>
@@ -636,6 +641,35 @@ async function loadLeads() {
 
   leads = data || [];
 
+  $("managerMessage").textContent = "";
+  if (isManager && leads.length) {
+    let privateFields;
+    let privateFieldsError;
+    try {
+      ({ data: privateFields, error: privateFieldsError } = await client.rpc(
+        "manager_lead_private_fields",
+        { p_lead_ids: leads.map(lead => lead.id) }
+      ));
+    } catch (requestError) {
+      privateFieldsError = requestError;
+    }
+
+    if (privateFieldsError) {
+      $("managerMessage").textContent =
+        "Não foi possível carregar observações e IDs do CRM.";
+      console.error(privateFieldsError);
+    } else {
+      const fieldsByLead = new Map(
+        (privateFields || []).map(fields => [fields.lead_id, fields])
+      );
+      leads = leads.map(lead => ({
+        ...lead,
+        observation: fieldsByLead.get(lead.id)?.observation ?? "",
+        crm_external_id: fieldsByLead.get(lead.id)?.crm_external_id ?? ""
+      }));
+    }
+  }
+
   $("message").textContent = "";
 
   render();
@@ -731,7 +765,7 @@ function render() {
 
     $("rows").innerHTML =
       "<tr>" +
-      "<td colspan=\\\"7\\\" class=\\\"empty\\\">" +
+      "<td colspan=\\\"" + (isManager ? "9" : "7") + "\\\" class=\\\"empty\\\">" +
       "Nenhum lead encontrado na sua carteira." +
       "</td>" +
       "</tr>";
@@ -790,6 +824,10 @@ function render() {
             lead.status
           ) +
         "</td>" +
+
+        (isManager ?
+          "<td>" + escapeHtml(lead.observation) + "</td>" +
+          "<td>" + escapeHtml(lead.crm_external_id) + "</td>" : "") +
 
       "</tr>"
     ).join("");
@@ -936,6 +974,21 @@ async function showApp() {
     return;
   }
 
+  isManager = false;
+  const { data: roles, error: rolesError } = await client
+    .from("user_roles")
+    .select("role")
+    .eq("user_id", user.id);
+
+  if (rolesError) {
+    console.error(rolesError);
+  } else {
+    isManager = (roles || []).some(role => role.role === "GERENTE");
+  }
+
+  $("managerObservationHeader").classList.toggle("hidden", !isManager);
+  $("managerCrmHeader").classList.toggle("hidden", !isManager);
+
 
   $("login")
     .classList
@@ -950,7 +1003,9 @@ async function showApp() {
   $("scope").textContent =
     "Usuário: " +
     user.email +
-    " · Acesso controlado pelo RLS do Supabase";
+    (isManager ?
+      " · Perfil gerente" :
+      " · Acesso controlado pelo RLS do Supabase");
 
 
   await loadLeads();
