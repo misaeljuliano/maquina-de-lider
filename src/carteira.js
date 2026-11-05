@@ -3,6 +3,410 @@ import publicWorker from "./index.js";
 const SUPABASE_URL = "https://xmipdjjdtruutcumhrzb.supabase.co";
 const SUPABASE_PUBLISHABLE_KEY =
   "sb_publishable_OtxakS5UtVe_2bxg0JckGg_bliWJdaG";
+const QR_PRODUCTION_ORIGIN = "https://maquina-de-lider.juliano-misael.workers.dev";
+
+const LEADER_ROLES = ["GERENTE", "EXECUTIVO", "SUPERVISOR"];
+const SELLER_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function jsonResponse(body, status = 200) {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "content-type": "application/json; charset=UTF-8", "cache-control": "no-store" }
+  });
+}
+
+function serviceHeaders(env, extra = {}) {
+  return {
+    apikey: env.SUPABASE_SERVICE_ROLE_KEY || "",
+    Authorization: "Bearer " + (env.SUPABASE_SERVICE_ROLE_KEY || ""),
+    ...extra
+  };
+}
+
+async function serviceRequest(env, endpoint, options = {}) {
+  const response = await fetch(SUPABASE_URL + endpoint, {
+    ...options,
+    headers: serviceHeaders(env, options.headers || {})
+  });
+  const text = await response.text();
+  let data = null;
+  if (text) {
+    try { data = JSON.parse(text); } catch { data = null; }
+  }
+  return { ok: response.ok, status: response.status, data };
+}
+
+async function requireLeader(request, env) {
+  const authorization = request.headers.get("authorization") || "";
+  if (!/^Bearer\s+\S+$/i.test(authorization)) return { error: jsonResponse({ error: "Sessão expirada. Entre novamente." }, 401) };
+  if (!env.SUPABASE_SERVICE_ROLE_KEY) return { error: jsonResponse({ error: "Gestão de vendedores indisponível." }, 503) };
+  let userResponse;
+  try {
+    userResponse = await fetch(SUPABASE_URL + "/auth/v1/user", {
+      headers: { apikey: SUPABASE_PUBLISHABLE_KEY, Authorization: authorization }
+    });
+  } catch {
+    return { error: jsonResponse({ error: "Não foi possível validar a sessão." }, 503) };
+  }
+  if (!userResponse.ok) return { error: jsonResponse({ error: "Sessão expirada. Entre novamente." }, 401) };
+  const user = await userResponse.json();
+  if (!SELLER_ID_RE.test(user?.id || "")) return { error: jsonResponse({ error: "Acesso não autorizado." }, 403) };
+  const result = await serviceRequest(env, "/rest/v1/user_roles?user_id=eq." + user.id + "&select=role");
+  if (!result.ok) return { error: jsonResponse({ error: "Não foi possível confirmar seu perfil." }, 503) };
+  const roles = (result.data || []).map(row => row.role);
+  const role = LEADER_ROLES.find(item => roles.includes(item));
+  if (!role) return { error: jsonResponse({ error: "Somente gerente, executivo ou supervisor pode gerir vendedores." }, 403) };
+  return { user, role };
+}
+
+function communicationReadiness(env) {
+  const emailReady = !!(env.RESEND_API_KEY && env.EMAIL_FROM);
+  const whatsappReady = !!(env.WHATSAPP_ACCESS_TOKEN && env.WHATSAPP_PHONE_NUMBER_ID
+    && env.WHATSAPP_TEMPLATE_NAME && env.WHATSAPP_API_VERSION && /^v\d+\.\d+$/.test(env.WHATSAPP_API_VERSION));
+  return { email: emailReady, whatsapp: whatsappReady, ready: emailReady && whatsappReady };
+}
+
+function qrBase64(value) {
+  if (typeof value !== "string" || !value.startsWith("data:image/png;base64,")) return "";
+  const encoded = value.slice("data:image/png;base64,".length);
+  if (!encoded || encoded.length > 180000 || !/^[A-Za-z0-9+/]+={0,2}$/.test(encoded)) return "";
+  try {
+    const bytes = Uint8Array.from(atob(encoded), char => char.charCodeAt(0));
+    const pngHeader = [137, 80, 78, 71, 13, 10, 26, 10];
+    if (bytes.length < pngHeader.length || !pngHeader.every((value, index) => bytes[index] === value)) return "";
+    return encoded;
+  } catch { return ""; }
+}
+
+function safeHtml(value) {
+  return String(value ?? "").replace(/[&<>"']/g, char => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+  }[char]));
+}
+
+function phoneDigits(value) {
+  let digits = String(value || "").replace(/\D/g, "");
+  if (digits.startsWith("55") && digits.length > 11) digits = digits.slice(2);
+  return digits;
+}
+
+function slugify(value) {
+  return String(value || "")
+    .normalize("NFKD").replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "")
+    .slice(0, 48) || "vendedor";
+}
+
+async function sendSellerEmail(env, email, name, qrUrl, qrPng, inviteUrl, slug) {
+  const png = qrPng.split(",")[1];
+  const response = await fetch("https://api.resend.com/emails", {
+    method: "POST",
+    headers: { Authorization: "Bearer " + env.RESEND_API_KEY, "content-type": "application/json" },
+    body: JSON.stringify({
+      from: env.EMAIL_FROM,
+      to: [email],
+      subject: "Seu acesso e QR Code da Máquina de Líder",
+      text: "Olá " + name + ". Acesse sua carteira pelo convite e use o QR Code em anexo. Link do QR: " + qrUrl + "\nAtive seu acesso: " + inviteUrl,
+      html: "<p>Olá " + safeHtml(name) + ".</p><p>Seu acesso à Minha Carteira está pronto. Abra o convite para definir sua senha.</p><p><a href=\"" + safeHtml(inviteUrl) + "\">Ativar meu acesso</a></p><p>Este é seu QR Code oficial. O link permanente é <a href=\"" + safeHtml(qrUrl) + "\">" + safeHtml(qrUrl) + "</a>.</p><p>O arquivo PNG do QR Code está anexado.</p>",
+      attachments: [{ filename: "qr-" + slug + ".png", content: png }]
+    })
+  });
+  return { ok: response.ok, status: response.status };
+}
+
+async function sendSellerWhatsApp(env, phone, name, qrUrl, qrPng) {
+  const apiBase = "https://graph.facebook.com/" + env.WHATSAPP_API_VERSION;
+  const bytes = Uint8Array.from(atob(qrPng.split(",")[1]), char => char.charCodeAt(0));
+  const form = new FormData();
+  form.append("messaging_product", "whatsapp");
+  form.append("file", new Blob([bytes], { type: "image/png" }), "qr-vendedor.png");
+  const media = await fetch(apiBase + "/" + encodeURIComponent(env.WHATSAPP_PHONE_NUMBER_ID) + "/media", {
+    method: "POST", headers: { Authorization: "Bearer " + env.WHATSAPP_ACCESS_TOKEN }, body: form
+  });
+  if (!media.ok) return { ok: false, status: media.status };
+  const mediaData = await media.json();
+  if (!mediaData.id) return { ok: false, status: 502 };
+  const recipient = phone.startsWith("55") ? phone : "55" + phone;
+  const response = await fetch(apiBase + "/" + encodeURIComponent(env.WHATSAPP_PHONE_NUMBER_ID) + "/messages", {
+    method: "POST",
+    headers: { Authorization: "Bearer " + env.WHATSAPP_ACCESS_TOKEN, "content-type": "application/json" },
+    body: JSON.stringify({
+      messaging_product: "whatsapp", to: recipient, type: "template",
+      template: {
+        name: env.WHATSAPP_TEMPLATE_NAME,
+        language: { code: env.WHATSAPP_TEMPLATE_LANGUAGE || "pt_BR" },
+        components: [
+          { type: "header", parameters: [{ type: "image", image: { id: mediaData.id } }] },
+          { type: "body", parameters: [{ type: "text", text: name }, { type: "text", text: qrUrl }] }
+        ]
+      }
+    })
+  });
+  return { ok: response.ok, status: response.status };
+}
+
+async function createInviteLink(env, email, name) {
+  return serviceRequest(env, "/auth/v1/admin/generate_link", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      type: "invite", email,
+      options: { data: { name, role: "VENDEDOR" }, redirectTo: QR_PRODUCTION_ORIGIN + "/carteira" }
+    })
+  });
+}
+
+async function getTeamRows(env, leader) {
+  const params = new URLSearchParams({
+    select: "id,slug,name,phone,region,active,seller_user_id,supervisor_user_id,executive_user_id",
+    order: "name.asc"
+  });
+  if (leader.role === "EXECUTIVO") params.set("executive_user_id", "eq." + leader.user.id);
+  if (leader.role === "SUPERVISOR") params.set("supervisor_user_id", "eq." + leader.user.id);
+  const result = await serviceRequest(env, "/rest/v1/sellers?" + params.toString());
+  return result.ok && Array.isArray(result.data) ? result.data : null;
+}
+
+async function getAdminUserLabel(env, userId) {
+  if (!SELLER_ID_RE.test(userId || "")) return "";
+  const result = await serviceRequest(env, "/auth/v1/admin/users/" + userId);
+  if (!result.ok) return "";
+  return result.data?.user_metadata?.name || "Usuário " + userId.slice(0, 8);
+}
+
+async function getSellerRoles(env, userIds) {
+  const ids = [...new Set(userIds.filter(id => SELLER_ID_RE.test(id || "")))];
+  if (!ids.length) return {};
+  const response = await serviceRequest(env, "/rest/v1/user_roles?user_id=in.(" + ids.join(",") + ")&select=user_id,role");
+  if (!response.ok) return {};
+  return Object.fromEntries((response.data || []).map(item => [item.user_id, item.role]));
+}
+
+async function getOnboardingMap(env, sellers) {
+  if (!sellers.length) return new Map();
+  const ids = sellers.map(seller => seller.id).filter(id => SELLER_ID_RE.test(id || ""));
+  if (!ids.length) return new Map();
+  const response = await serviceRequest(env, "/rest/v1/seller_onboarding?seller_id=in.(" + ids.join(",") + ")&select=seller_id,email_status,whatsapp_status,email_error,whatsapp_error,attempt_count");
+  if (!response.ok) return new Map();
+  return new Map((response.data || []).map(item => [item.seller_id, item]));
+}
+
+async function leaderSellersApi(request, env, url) {
+  const leader = await requireLeader(request, env);
+  if (leader.error) return leader.error;
+  const readiness = communicationReadiness(env);
+  const onboardingRoute = url.pathname.match(/^\/api\/sellers\/([0-9a-f-]+)\/retry$/i);
+  const sellerRoute = url.pathname.match(/^\/api\/sellers\/([0-9a-f-]+)$/i);
+
+  if (request.method === "GET" && url.pathname === "/api/sellers") {
+    const sellers = await getTeamRows(env, leader);
+    if (!sellers) return jsonResponse({ error: "Não foi possível carregar sua equipe." }, 503);
+    const onboarding = await getOnboardingMap(env, sellers);
+    const executives = [...new Set(sellers.map(item => item.executive_user_id).filter(Boolean))];
+    const supervisors = [...new Set(sellers.map(item => item.supervisor_user_id).filter(Boolean))];
+    const [executiveLabels, supervisorLabels] = await Promise.all([
+      Promise.all(executives.map(async id => [id, await getAdminUserLabel(env, id)])),
+      Promise.all(supervisors.map(async id => [id, await getAdminUserLabel(env, id)]))
+    ]);
+    return jsonResponse({
+      role: leader.role,
+      readiness,
+      assignableExecutives: executiveLabels.filter(([, label]) => label).map(([id, label]) => ({ id, label })),
+      assignableSupervisors: supervisorLabels.filter(([, label]) => label).map(([id, label]) => ({ id, label })),
+      sellers: sellers.map(seller => ({
+        ...seller,
+        onboarding: onboarding.get(seller.id) || null
+      }))
+    });
+  }
+
+  if (request.method === "POST" && url.pathname === "/api/sellers") {
+    if (!readiness.ready) return jsonResponse({ error: "Configure o e-mail e o WhatsApp oficial antes de cadastrar vendedores.", readiness }, 503);
+    const contentLength = Number(request.headers.get("content-length") || 0);
+    if (contentLength > 220000) return jsonResponse({ error: "Imagem QR muito grande." }, 413);
+    let body;
+    try {
+      const raw = await request.text();
+      if (raw.length > 220000) return jsonResponse({ error: "Imagem QR muito grande." }, 413);
+      body = JSON.parse(raw);
+    } catch { return jsonResponse({ error: "Dados do vendedor inválidos." }, 400); }
+    const id = String(body.sellerId || "");
+    const name = String(body.name || "").trim();
+    const email = String(body.email || "").trim().toLowerCase();
+    const digits = phoneDigits(body.phone);
+    const region = String(body.region || "Santos").trim();
+    const qrPng = qrBase64(body.qrPng);
+    if (!SELLER_ID_RE.test(id) || name.length < 2 || name.length > 120
+      || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 254
+      || ![10, 11].includes(digits.length) || region.length < 2 || region.length > 80 || !qrPng) {
+      return jsonResponse({ error: "Confira nome, e-mail, telefone e região do vendedor." }, 400);
+    }
+
+    let executiveUserId = null;
+    let supervisorUserId = null;
+    const team = await getTeamRows(env, leader);
+    if (!team) return jsonResponse({ error: "Não foi possível validar os limites da equipe." }, 503);
+    if (leader.role === "GERENTE") {
+      executiveUserId = body.executiveUserId || null;
+      supervisorUserId = body.supervisorUserId || null;
+      if (executiveUserId && !SELLER_ID_RE.test(executiveUserId)) return jsonResponse({ error: "Executivo inválido." }, 400);
+      if (supervisorUserId && !SELLER_ID_RE.test(supervisorUserId)) return jsonResponse({ error: "Supervisor inválido." }, 400);
+    } else if (leader.role === "EXECUTIVO") {
+      executiveUserId = leader.user.id;
+      supervisorUserId = body.supervisorUserId || null;
+      if (supervisorUserId && !team.some(item => item.supervisor_user_id === supervisorUserId)) return jsonResponse({ error: "Esse supervisor não pertence à sua equipe." }, 403);
+    } else {
+      supervisorUserId = leader.user.id;
+      executiveUserId = body.executiveUserId || [...new Set(team.map(item => item.executive_user_id).filter(Boolean))][0] || null;
+      if (executiveUserId && !team.some(item => item.executive_user_id === executiveUserId)) return jsonResponse({ error: "Esse executivo não pertence à sua equipe." }, 403);
+    }
+
+    const roleIds = [executiveUserId, supervisorUserId].filter(Boolean);
+    const roleMap = await getSellerRoles(env, roleIds);
+    if ((executiveUserId && roleMap[executiveUserId] !== "EXECUTIVO")
+      || (supervisorUserId && roleMap[supervisorUserId] !== "SUPERVISOR")) {
+      return jsonResponse({ error: "A atribuição precisa apontar para contas já cadastradas no perfil correspondente." }, 400);
+    }
+
+    const invite = await createInviteLink(env, email, name);
+    const inviteUrl = invite.data?.properties?.action_link || invite.data?.action_link;
+    const userId = invite.data?.user?.id || invite.data?.user_id;
+    if (!invite.ok || !SELLER_ID_RE.test(userId || "") || typeof inviteUrl !== "string") {
+      return jsonResponse({ error: invite.status === 422 ? "Já existe uma conta com esse e-mail." : "Não foi possível criar o convite de acesso." }, invite.status === 422 ? 409 : 502);
+    }
+
+    const sellerSlug = slugify(name) + "-" + id.slice(0, 8);
+    const sellerInsert = await serviceRequest(env, "/rest/v1/sellers", {
+      method: "POST",
+      headers: { "content-type": "application/json", Prefer: "return=representation" },
+      body: JSON.stringify({
+        id, slug: sellerSlug, name, phone: digits, region, active: false,
+        seller_user_id: userId, executive_user_id: executiveUserId, supervisor_user_id: supervisorUserId
+      })
+    });
+    if (!sellerInsert.ok) {
+      await serviceRequest(env, "/auth/v1/admin/users/" + userId, { method: "DELETE" });
+      return jsonResponse({ error: sellerInsert.status === 409 ? "Já existe um vendedor com esse identificador." : "Não foi possível salvar o vendedor." }, 409);
+    }
+
+    const roleInsert = await serviceRequest(env, "/rest/v1/user_roles", {
+      method: "POST", headers: { "content-type": "application/json", Prefer: "return=minimal" },
+      body: JSON.stringify({ user_id: userId, role: "VENDEDOR" })
+    });
+    const onboardingInsert = roleInsert.ok ? await serviceRequest(env, "/rest/v1/seller_onboarding", {
+      method: "POST", headers: { "content-type": "application/json", Prefer: "return=minimal" },
+      body: JSON.stringify({ seller_id: id, email_status: "pending", whatsapp_status: "pending", attempt_count: 0 })
+    }) : { ok: false };
+    if (!roleInsert.ok || !onboardingInsert.ok) {
+      await serviceRequest(env, "/rest/v1/sellers?id=eq." + id, { method: "DELETE" });
+      await serviceRequest(env, "/auth/v1/admin/users/" + userId, { method: "DELETE" });
+      return jsonResponse({ error: "Não foi possível concluir o cadastro. Nenhum vendedor foi ativado." }, 503);
+    }
+
+    return await deliverSellerOnboarding(env, {
+      id, slug: sellerSlug, name, email, phone: digits, userId, inviteUrl, qrPng, retry: false
+    });
+  }
+
+  if ((request.method === "PATCH" && sellerRoute) || (request.method === "POST" && onboardingRoute)) {
+    const id = sellerRoute?.[1] || onboardingRoute?.[1];
+    if (!SELLER_ID_RE.test(id || "")) return jsonResponse({ error: "Vendedor inválido." }, 400);
+    const targetResult = await serviceRequest(env, "/rest/v1/sellers?id=eq." + id + "&select=id,slug,name,phone,active,seller_user_id,supervisor_user_id,executive_user_id");
+    const target = targetResult.data?.[0];
+    if (!target) return jsonResponse({ error: "Vendedor não encontrado." }, 404);
+    const inScope = leader.role === "GERENTE"
+      || (leader.role === "EXECUTIVO" && target.executive_user_id === leader.user.id)
+      || (leader.role === "SUPERVISOR" && target.supervisor_user_id === leader.user.id);
+    if (!inScope) return jsonResponse({ error: "Esse vendedor não pertence à sua equipe." }, 403);
+
+    if (request.method === "PATCH") {
+      let body;
+      try { body = await request.json(); } catch { return jsonResponse({ error: "Ação inválida." }, 400); }
+      if (typeof body.active !== "boolean") return jsonResponse({ error: "Informe o novo estado do vendedor." }, 400);
+      if (body.active) {
+        const onboarding = await serviceRequest(env, "/rest/v1/seller_onboarding?seller_id=eq." + id + "&select=email_status,whatsapp_status");
+        const state = onboarding.data?.[0];
+        if (state && (state.email_status !== "sent" || state.whatsapp_status !== "sent")) return jsonResponse({ error: "O vendedor só pode ser reativado depois que os dois envios forem confirmados." }, 409);
+        if (!target.seller_user_id) return jsonResponse({ error: "Este vendedor ainda não possui conta vinculada." }, 409);
+      }
+      const update = await serviceRequest(env, "/rest/v1/sellers?id=eq." + id, {
+        method: "PATCH", headers: { "content-type": "application/json", Prefer: "return=representation" },
+        body: JSON.stringify({ active: body.active })
+      });
+      if (!update.ok) return jsonResponse({ error: "Não foi possível alterar o acesso do vendedor." }, 503);
+      return jsonResponse({ ok: true, active: body.active });
+    }
+
+    if (!readiness.ready) return jsonResponse({ error: "Configure o e-mail e o WhatsApp oficial antes de reenviar convites." , readiness }, 503);
+    const raw = await request.text();
+    if (raw.length > 220000) return jsonResponse({ error: "Imagem QR muito grande." }, 413);
+    let body;
+    try { body = JSON.parse(raw); } catch { return jsonResponse({ error: "Imagem QR inválida." }, 400); }
+    const qrPng = qrBase64(body.qrPng);
+    if (!qrPng) return jsonResponse({ error: "Imagem QR inválida." }, 400);
+    const onboarding = await serviceRequest(env, "/rest/v1/seller_onboarding?seller_id=eq." + id + "&select=email_status,whatsapp_status");
+    if (!onboarding.data?.length) return jsonResponse({ error: "Não há envios pendentes para esse vendedor." }, 409);
+    const authUser = await serviceRequest(env, "/auth/v1/admin/users/" + target.seller_user_id);
+    const email = authUser.data?.email;
+    if (!email) return jsonResponse({ error: "Não foi possível localizar o e-mail de convite." }, 503);
+    const invite = onboarding.data[0].email_status === "sent" ? null : await createInviteLink(env, email, target.name);
+    const inviteUrl = invite?.data?.properties?.action_link || invite?.data?.action_link;
+    if (invite && (!invite.ok || typeof inviteUrl !== "string")) return jsonResponse({ error: "Não foi possível recriar o convite por e-mail." }, 502);
+    return await deliverSellerOnboarding(env, {
+      id, slug: target.slug, name: target.name, email, phone: target.phone, userId: target.seller_user_id,
+      inviteUrl, qrPng, retry: true, onboarding: onboarding.data[0]
+    });
+  }
+
+  return jsonResponse({ error: "Ação não permitida." }, 405);
+}
+
+async function deliverSellerOnboarding(env, seller) {
+  const qrUrl = QR_PRODUCTION_ORIGIN + "/?vendedor=" + encodeURIComponent(seller.id);
+  const emailStatus = seller.retry ? seller.onboarding.email_status : "pending";
+  const whatsappStatus = seller.retry ? seller.onboarding.whatsapp_status : "pending";
+  let emailResult = { ok: emailStatus === "sent", status: 200 };
+  let whatsappResult = { ok: whatsappStatus === "sent", status: 200 };
+  if (emailStatus !== "sent") {
+    try { emailResult = await sendSellerEmail(env, seller.email, seller.name, qrUrl, seller.qrPng, seller.inviteUrl, seller.slug); }
+    catch { emailResult = { ok: false, status: 502 }; }
+  }
+  if (whatsappStatus !== "sent") {
+    try { whatsappResult = await sendSellerWhatsApp(env, seller.phone, seller.name, qrUrl, seller.qrPng); }
+    catch { whatsappResult = { ok: false, status: 502 }; }
+  }
+  const nextEmail = emailResult.ok ? "sent" : "failed";
+  const nextWhatsapp = whatsappResult.ok ? "sent" : "failed";
+  await serviceRequest(env, "/rest/v1/seller_onboarding?seller_id=eq." + seller.id, {
+    method: "PATCH", headers: { "content-type": "application/json", Prefer: "return=minimal" },
+    body: JSON.stringify({
+      email_status: nextEmail, whatsapp_status: nextWhatsapp,
+      email_error: emailResult.ok ? null : "Falha no provedor de e-mail (HTTP " + emailResult.status + ")",
+      whatsapp_error: whatsappResult.ok ? null : "Falha no provedor de WhatsApp (HTTP " + whatsappResult.status + ")",
+      attempt_count: (seller.onboarding?.attempt_count || 0) + 1,
+      updated_at: new Date().toISOString()
+    })
+  });
+  const active = nextEmail === "sent" && nextWhatsapp === "sent";
+  if (active) {
+    await serviceRequest(env, "/rest/v1/sellers?id=eq." + seller.id, {
+      method: "PATCH", headers: { "content-type": "application/json", Prefer: "return=minimal" },
+      body: JSON.stringify({ active: true })
+    });
+  }
+  return jsonResponse({
+    created: !seller.retry, id: seller.id, active,
+    emailStatus: nextEmail, whatsappStatus: nextWhatsapp,
+    message: active ? "Convite e QR enviados. O vendedor já pode acessar a carteira." : "Cadastro pendente: os acessos permanecem bloqueados até confirmar os dois envios."
+  }, seller.retry ? 200 : 201);
+}
+
+async function routeLeaderSellers(request, env, url) {
+  if (url.pathname === "/api/sellers" || url.pathname.startsWith("/api/sellers/")) {
+    return leaderSellersApi(request, env, url);
+  }
+  return null;
+}
 
 function html(body) {
   return new Response(body, {
@@ -427,6 +831,28 @@ th{
     <div id="qrGrid" class="qr-grid"></div>
   </section>
 
+  <section id="sellerManagementPanel" class="card hidden" style="margin-top:18px">
+    <h2 class="h">Equipe de vendedores</h2>
+    <p class="muted">Cadastre e ative vendedores da sua equipe. O acesso só é liberado depois da confirmação do e-mail e do WhatsApp.</p>
+    <p id="sellerSetupStatus" class="muted" role="status" aria-live="polite"></p>
+    <form id="sellerForm" class="filters" style="grid-template-columns:repeat(auto-fit,minmax(190px,1fr));margin:14px 0">
+      <input id="sellerName" placeholder="Nome do vendedor" required maxlength="120">
+      <input id="sellerEmail" type="email" placeholder="E-mail" required maxlength="254">
+      <input id="sellerPhone" type="tel" placeholder="WhatsApp com DDD" required>
+      <input id="sellerRegion" placeholder="Região" value="Santos" required maxlength="80">
+      <select id="sellerExecutive" class="hidden"><option value="">Selecione o executivo</option></select>
+      <select id="sellerSupervisor" class="hidden"><option value="">Selecione o supervisor</option></select>
+      <button id="sellerCreateBtn" class="btn" type="submit">Cadastrar vendedor</button>
+    </form>
+    <div id="sellerManagementStatus" class="muted" role="status" aria-live="polite"></div>
+    <div style="overflow:auto;margin-top:12px">
+      <table style="width:100%;border-collapse:collapse">
+        <thead><tr><th>Vendedor</th><th>Região</th><th>Estado</th><th>Envios</th><th>Ação</th></tr></thead>
+        <tbody id="sellerManagementRows"></tbody>
+      </table>
+    </div>
+  </section>
+
 
   <div
     class="card"
@@ -557,6 +983,8 @@ const client = createClient(
 
 let leads = [];
 let isManager = false;
+let leaderRole = "";
+let sellerTeamData = null;
 const QR_PRODUCTION_ORIGIN = "https://maquina-de-lider.juliano-misael.workers.dev";
 
 
@@ -1017,6 +1445,7 @@ async function showApp() {
   }
 
   isManager = false;
+  leaderRole = "";
   const { data: roles, error: rolesError } = await client
     .from("user_roles")
     .select("role")
@@ -1026,19 +1455,19 @@ async function showApp() {
     console.error(rolesError);
   } else {
     isManager = (roles || []).some(role => role.role === "GERENTE");
+    leaderRole = (roles || []).map(role => role.role).find(role => ["GERENTE", "EXECUTIVO", "SUPERVISOR"].includes(role)) || "";
   }
 
   $("managerObservationHeader").classList.toggle("hidden", !isManager);
   $("managerCrmHeader").classList.toggle("hidden", !isManager);
   $("managerQrPanel").classList.toggle("hidden", !isManager);
+  $("sellerManagementPanel").classList.toggle("hidden", !leaderRole);
 
 
   $("scope").textContent =
     "Usuário: " +
     user.email +
-    (isManager ?
-      " · Perfil gerente" :
-      " · Acesso controlado pelo RLS do Supabase");
+    (leaderRole ? " · Perfil " + leaderRole.toLowerCase() : " · Acesso controlado pelo RLS do Supabase");
 
 
   await loadLeads();
@@ -1046,11 +1475,123 @@ async function showApp() {
   if (isManager) {
     await loadManagerQrSellers();
   }
+  if (leaderRole) await loadSellerManagement();
 
   $("login").classList.add("hidden");
   $("app").classList.remove("hidden");
 
 }
+
+function sellerApiHeaders() {
+  return client.auth.getSession().then(({ data }) => ({
+    "content-type": "application/json",
+    Authorization: "Bearer " + (data?.session?.access_token || "")
+  }));
+}
+
+async function loadSellerManagement() {
+  const status = $("sellerSetupStatus");
+  const rows = $("sellerManagementRows");
+  status.textContent = "Carregando equipe…";
+  try {
+    const headers = await sellerApiHeaders();
+    const response = await fetch("/api/sellers", { headers });
+    const payload = await response.json();
+    if (!response.ok) throw new Error(payload.error || "Não foi possível carregar a equipe.");
+    sellerTeamData = payload;
+    const readinessText = [];
+    if (!payload.readiness?.email) readinessText.push("E-mail automático ainda não configurado");
+    if (!payload.readiness?.whatsapp) readinessText.push("WhatsApp oficial ainda não configurado");
+    status.textContent = readinessText.length
+      ? readinessText.join(" · ") + ". Novos cadastros serão liberados quando os dois canais estiverem prontos."
+      : "E-mail e WhatsApp prontos para envio automático.";
+    $("sellerCreateBtn").disabled = !payload.readiness?.ready;
+    const execSelect = $("sellerExecutive");
+    const supSelect = $("sellerSupervisor");
+    execSelect.classList.toggle("hidden", payload.role !== "GERENTE" && payload.role !== "SUPERVISOR");
+    supSelect.classList.toggle("hidden", payload.role === "SUPERVISOR");
+    for (const [select, choices, label] of [[execSelect, payload.assignableExecutives, "Selecione o executivo"], [supSelect, payload.assignableSupervisors, "Selecione o supervisor"]]) {
+      select.replaceChildren(new Option(label, ""));
+      (choices || []).forEach(choice => select.add(new Option(choice.label, choice.id)));
+      if (!choices?.length) select.classList.add("hidden");
+    }
+    rows.replaceChildren();
+    (payload.sellers || []).forEach(seller => {
+      const tr = document.createElement("tr");
+      const state = seller.active ? "Ativo" : "Desligado";
+      const delivery = seller.onboarding
+        ? "E-mail: " + seller.onboarding.email_status + " · WhatsApp: " + seller.onboarding.whatsapp_status
+        : "Sem controle de envio";
+      const name = document.createElement("td"); name.textContent = seller.name;
+      const region = document.createElement("td"); region.textContent = seller.region || "—";
+      const active = document.createElement("td"); active.textContent = state;
+      const sends = document.createElement("td"); sends.textContent = delivery;
+      const actionCell = document.createElement("td");
+      const action = document.createElement("button"); action.type = "button"; action.className = "btn secondary";
+      action.textContent = seller.active ? "Desligar" : "Reativar";
+      action.addEventListener("click", () => setSellerActive(seller, !seller.active));
+      actionCell.append(action);
+      if (seller.onboarding && (seller.onboarding.email_status !== "sent" || seller.onboarding.whatsapp_status !== "sent")) {
+        const retry = document.createElement("button"); retry.type = "button"; retry.className = "btn secondary"; retry.style.marginLeft = "6px"; retry.textContent = "Reenviar pendentes";
+        retry.addEventListener("click", () => retrySellerDelivery(seller)); actionCell.append(retry);
+      }
+      tr.append(name, region, active, sends, actionCell); rows.append(tr);
+    });
+  } catch (error) {
+    status.textContent = error.message;
+  }
+}
+
+async function setSellerActive(seller, active) {
+  const status = $("sellerManagementStatus"); status.textContent = "Salvando…";
+  try {
+    const headers = await sellerApiHeaders();
+    const response = await fetch("/api/sellers/" + encodeURIComponent(seller.id), { method: "PATCH", headers, body: JSON.stringify({ active }) });
+    const result = await response.json(); if (!response.ok) throw new Error(result.error || "Não foi possível alterar o acesso.");
+    status.textContent = active ? "Vendedor reativado." : "Vendedor desligado; o acesso foi bloqueado.";
+    await loadSellerManagement();
+  } catch (error) { status.textContent = error.message; }
+}
+
+async function createSeller(event) {
+  event.preventDefault();
+  const button = $("sellerCreateBtn"); const status = $("sellerManagementStatus");
+  if (typeof window.qrcode !== "function") { status.textContent = "Gerador de QR indisponível. Atualize a página."; return; }
+  button.disabled = true; button.textContent = "Criando e enviando…"; status.textContent = "";
+  try {
+    const id = crypto.randomUUID();
+    const canonical = new URL("/", QR_PRODUCTION_ORIGIN); canonical.searchParams.set("vendedor", id);
+    const qr = qrcode(0, "M"); qr.addData(canonical.href); qr.make();
+    const qrPng = qr.createDataURL(8, 4);
+    const headers = await sellerApiHeaders();
+    const response = await fetch("/api/sellers", { method: "POST", headers, body: JSON.stringify({
+      sellerId: id, name: $("sellerName").value.trim(), email: $("sellerEmail").value.trim(),
+      phone: $("sellerPhone").value.trim(), region: $("sellerRegion").value.trim(),
+      executiveUserId: $("sellerExecutive").value || null, supervisorUserId: $("sellerSupervisor").value || null,
+      qrPng
+    }) });
+    const result = await response.json(); if (!response.ok) throw new Error(result.error || "Não foi possível cadastrar.");
+    status.textContent = result.message || "Cadastro processado.";
+    if (result.active) $("sellerForm").reset();
+    await loadSellerManagement();
+    if (isManager) await loadManagerQrSellers();
+  } catch (error) { status.textContent = error.message; }
+  finally { button.disabled = !sellerTeamData?.readiness?.ready; button.textContent = "Cadastrar vendedor"; }
+}
+
+async function retrySellerDelivery(seller) {
+  const status = $("sellerManagementStatus"); status.textContent = "Reenviando mensagens pendentes…";
+  try {
+    const canonical = new URL("/", QR_PRODUCTION_ORIGIN); canonical.searchParams.set("vendedor", seller.id);
+    const qr = qrcode(0, "M"); qr.addData(canonical.href); qr.make();
+    const headers = await sellerApiHeaders();
+    const response = await fetch("/api/sellers/" + encodeURIComponent(seller.id) + "/retry", { method: "POST", headers, body: JSON.stringify({ qrPng: qr.createDataURL(8, 4) }) });
+    const result = await response.json(); if (!response.ok) throw new Error(result.error || "Não foi possível reenviar.");
+    status.textContent = result.message || "Reenvio processado."; await loadSellerManagement();
+  } catch (error) { status.textContent = error.message; }
+}
+
+$("sellerForm").addEventListener("submit", createSeller);
 
 
 let qrSellers = [];
@@ -1293,6 +1834,9 @@ export default {
 
     const url =
       new URL(request.url);
+
+    const apiResponse = await routeLeaderSellers(request, env, url);
+    if (apiResponse) return apiResponse;
 
 
     if (
