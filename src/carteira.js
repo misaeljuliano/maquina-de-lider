@@ -853,7 +853,7 @@ async function login() {
 
     if (error) {
       $("loginError").textContent =
-        "Acesso não autorizado. Verifique e-mail e senha.";
+        "Login ou senha incorreto.";
       return;
     }
 
