@@ -252,10 +252,6 @@ th{
 
 <div class="wrap">
 
-<section id="startup" class="card login" role="status" aria-live="polite">
-  Verificando sua sessão...
-</section>
-
 <section id="login" class="card login hidden">
 
   <h1 class="h">Acesso à Minha Carteira</h1>
@@ -339,14 +335,6 @@ th{
 
         <div id="scope" class="muted"></div>
       </div>
-
-      <button
-        class="btn secondary"
-        id="refreshBtn"
-        type="button"
-      >
-        Atualizar carteira
-      </button>
 
       <button
         class="btn secondary"
@@ -516,8 +504,6 @@ const client = createClient(
 
 let leads = [];
 let isManager = false;
-let isLoadingLeads = false;
-let leadsRefreshTimer = null;
 
 
 const $ = id =>
@@ -616,88 +602,65 @@ function formatDate(value) {
 }
 
 
-async function loadLeads({ quiet = false } = {}) {
-  if (isLoadingLeads) {
+async function loadLeads() {
+  let data;
+  let error;
+  try {
+    ({ data, error } = await client
+      .from("leads")
+      .select(
+        "id,name,customer_phone,address,has_claro,product_searched,status,created_at,seller_id"
+      )
+      .order(
+        "created_at",
+        {
+          ascending:false
+        }
+      ));
+  } catch (requestError) {
+    error = requestError;
+  }
+
+  if (error) {
+    $("message").textContent =
+      "Não foi possível carregar sua carteira.";
+    console.error(error);
     return;
   }
 
-  isLoadingLeads = true;
-  const refreshButton = $("refreshBtn");
-  const originalRefreshText = refreshButton.textContent;
-  if (!quiet) {
-    $("message").textContent = "Carregando...";
-    refreshButton.disabled = true;
-    refreshButton.textContent = "Atualizando...";
-  }
+  leads = data || [];
 
-  try {
-    let data;
-    let error;
+  $("managerMessage").textContent = "";
+  if (isManager && leads.length) {
+    let privateFields;
+    let privateFieldsError;
     try {
-      ({ data, error } = await client
-        .from("leads")
-        .select(
-          "id,name,customer_phone,address,has_claro,product_searched,status,created_at,seller_id"
-        )
-        .order(
-          "created_at",
-          {
-            ascending:false
-          }
-        ));
+      ({ data: privateFields, error: privateFieldsError } = await client.rpc(
+        "manager_lead_private_fields",
+        { p_lead_ids: leads.map(lead => lead.id) }
+      ));
     } catch (requestError) {
-      error = requestError;
+      privateFieldsError = requestError;
     }
 
-
-    if (error) {
-      $("message").textContent =
-        "Não foi possível carregar sua carteira.";
-      console.error(error);
-      return;
-    }
-
-    leads = data || [];
-
-    $("managerMessage").textContent = "";
-    if (isManager && leads.length) {
-      let privateFields;
-      let privateFieldsError;
-      try {
-        ({ data: privateFields, error: privateFieldsError } = await client.rpc(
-          "manager_lead_private_fields",
-          { p_lead_ids: leads.map(lead => lead.id) }
-        ));
-      } catch (requestError) {
-        privateFieldsError = requestError;
-      }
-
-      if (privateFieldsError) {
-        $("managerMessage").textContent =
-          "Não foi possível carregar observações e IDs do CRM.";
-        console.error(privateFieldsError);
-      } else {
-        const fieldsByLead = new Map(
-          (privateFields || []).map(fields => [fields.lead_id, fields])
-        );
-        leads = leads.map(lead => ({
-          ...lead,
-          observation: fieldsByLead.get(lead.id)?.observation ?? "",
-          crm_external_id: fieldsByLead.get(lead.id)?.crm_external_id ?? ""
-        }));
-      }
-    }
-
-    $("message").textContent = "";
-    render();
-  } finally {
-    isLoadingLeads = false;
-    if (!quiet) {
-      refreshButton.disabled = false;
-      refreshButton.textContent = originalRefreshText;
+    if (privateFieldsError) {
+      $("managerMessage").textContent =
+        "Não foi possível carregar observações e IDs do CRM.";
+      console.error(privateFieldsError);
+    } else {
+      const fieldsByLead = new Map(
+        (privateFields || []).map(fields => [fields.lead_id, fields])
+      );
+      leads = leads.map(lead => ({
+        ...lead,
+        observation: fieldsByLead.get(lead.id)?.observation ?? "",
+        crm_external_id: fieldsByLead.get(lead.id)?.crm_external_id ?? ""
+      }));
     }
   }
 
+  $("message").textContent = "";
+  render();
 }
 
 
@@ -894,7 +857,6 @@ async function login() {
 
 
 function showPasswordPanel() {
-  $("startup").classList.add("hidden");
   $("login").classList.remove("hidden");
   $("loginForm").classList.add("hidden");
   $("resetPanel").classList.add("hidden");
@@ -1016,16 +978,6 @@ async function showApp() {
   $("managerCrmHeader").classList.toggle("hidden", !isManager);
 
 
-  $("login")
-    .classList
-    .add("hidden");
-
-
-  $("app")
-    .classList
-    .remove("hidden");
-
-
   $("scope").textContent =
     "Usuário: " +
     user.email +
@@ -1036,17 +988,8 @@ async function showApp() {
 
   await loadLeads();
 
-  if (leadsRefreshTimer) {
-    clearInterval(leadsRefreshTimer);
-  }
-  leadsRefreshTimer = setInterval(() => {
-    if (
-      document.visibilityState === "visible" &&
-      !$("app").classList.contains("hidden")
-    ) {
-      loadLeads({ quiet: true });
-    }
-  }, 30000);
+  $("login").classList.add("hidden");
+  $("app").classList.remove("hidden");
 
 }
 
@@ -1119,19 +1062,6 @@ $("status")
   .onchange = render;
 
 
-$("refreshBtn").onclick = () => loadLeads();
-
-
-document.addEventListener("visibilitychange", () => {
-  if (
-    document.visibilityState === "visible" &&
-    !$("app").classList.contains("hidden")
-  ) {
-    loadLeads({ quiet: true });
-  }
-});
-
-
 $("logoutBtn")
   .onclick =
     async () => {
@@ -1180,8 +1110,6 @@ $("logoutBtn")
     $("loginError").textContent =
       "Não foi possível verificar sua sessão. Atualize a página e tente novamente.";
     console.error(error);
-  } finally {
-    $("startup").classList.add("hidden");
   }
 })();
 
