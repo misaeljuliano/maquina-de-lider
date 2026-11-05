@@ -21,6 +21,7 @@ function page() {
 <title>Minha Carteira | Máquina de Líder</title>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.105.4/dist/umd/supabase.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.js"></script>
 
 <style>
 *{box-sizing:border-box}
@@ -223,6 +224,43 @@ th{
   color:#777
 }
 
+.qr-grid{
+  display:grid;
+  grid-template-columns:repeat(auto-fill,minmax(220px,1fr));
+  gap:12px
+}
+
+.qr-card{
+  border:1px solid #eee;
+  border-radius:10px;
+  padding:14px;
+  min-width:0
+}
+
+.qr-card img{
+  display:block;
+  width:160px;
+  height:160px;
+  max-width:100%;
+  margin:10px auto
+}
+
+.qr-url{
+  overflow-wrap:anywhere;
+  color:#555;
+  font-size:12px
+}
+
+@media print{
+  body.qr-printing *{visibility:hidden!important}
+  body.qr-printing #managerQrPanel,
+  body.qr-printing #managerQrPanel *{visibility:visible!important}
+  body.qr-printing #managerQrPanel{position:absolute;left:0;top:0;width:100%;box-shadow:none}
+  body.qr-printing .qr-grid{grid-template-columns:repeat(3,1fr)}
+  body.qr-printing .qr-card{break-inside:avoid}
+  body.qr-printing .qr-actions{display:none!important}
+}
+
 @media(max-width:700px){
   .stats{
     grid-template-columns:repeat(2,1fr)
@@ -374,6 +412,21 @@ th{
 
   </div>
 
+  <section id="managerQrPanel" class="card hidden" style="margin-top:18px">
+    <div class="bar">
+      <div>
+        <h2 class="h">QR Codes oficiais dos vendedores</h2>
+        <div class="muted">Os códigos usam o identificador permanente do cadastro. Leads enviados por esses links entram diretamente na Carteira.</div>
+      </div>
+      <div class="qr-actions" style="display:flex;gap:8px;flex-wrap:wrap">
+        <button id="generateQrBtn" class="btn" type="button">Gerar QR Codes</button>
+        <button id="printQrBtn" class="btn secondary hidden" type="button">Imprimir todos</button>
+      </div>
+    </div>
+    <div id="qrStatus" class="muted" role="status" aria-live="polite" style="margin:12px 0"></div>
+    <div id="qrGrid" class="qr-grid"></div>
+  </section>
+
 
   <div
     class="card"
@@ -504,6 +557,7 @@ const client = createClient(
 
 let leads = [];
 let isManager = false;
+const QR_PRODUCTION_ORIGIN = "https://maquina-de-lider.juliano-misael.workers.dev";
 
 
 const $ = id =>
@@ -976,6 +1030,7 @@ async function showApp() {
 
   $("managerObservationHeader").classList.toggle("hidden", !isManager);
   $("managerCrmHeader").classList.toggle("hidden", !isManager);
+  $("managerQrPanel").classList.toggle("hidden", !isManager);
 
 
   $("scope").textContent =
@@ -988,14 +1043,122 @@ async function showApp() {
 
   await loadLeads();
 
+  if (isManager) {
+    await loadManagerQrSellers();
+  }
+
   $("login").classList.add("hidden");
   $("app").classList.remove("hidden");
 
 }
 
 
+let qrSellers = [];
+
+async function loadManagerQrSellers() {
+  $("qrStatus").textContent = "Carregando vendedores ativos…";
+  const { data, error } = await client
+    .from("sellers")
+    .select("id,slug,name,active")
+    .eq("active", true)
+    .order("name");
+
+  if (error) {
+    $("qrStatus").textContent = "Não foi possível carregar os vendedores para gerar os QR Codes.";
+    console.error(error);
+    return;
+  }
+
+  qrSellers = data || [];
+  $("qrStatus").textContent = qrSellers.length
+    ? qrSellers.length + " vendedor(es) ativo(s). Os links não mudam se o nome do vendedor for atualizado."
+    : "Nenhum vendedor ativo encontrado.";
+}
+
+
+async function generateManagerQrs() {
+  const button = $("generateQrBtn");
+  const grid = $("qrGrid");
+  const origin = window.location.origin;
+  if (origin !== QR_PRODUCTION_ORIGIN) {
+    $("qrStatus").textContent = "QR Codes bloqueados: abra a Carteira pelo endereço oficial de produção.";
+    return;
+  }
+  if (typeof window.qrcode !== "function") {
+    $("qrStatus").textContent = "Não foi possível carregar o gerador de QR Codes. Atualize a página e tente novamente.";
+    return;
+  }
+  if (!qrSellers.length) {
+    await loadManagerQrSellers();
+    if (!qrSellers.length) return;
+  }
+
+  button.disabled = true;
+  button.textContent = "Gerando…";
+  grid.replaceChildren();
+  $("printQrBtn").classList.add("hidden");
+  let generated = 0;
+
+  try {
+    for (const seller of qrSellers) {
+      if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(seller.id || "")) continue;
+      const url = new URL("/", QR_PRODUCTION_ORIGIN);
+      url.searchParams.set("vendedor", seller.id);
+      const card = document.createElement("article");
+      card.className = "qr-card";
+      const title = document.createElement("strong");
+      title.textContent = seller.name || seller.slug;
+      const qrImage = document.createElement("img");
+      qrImage.alt = "QR Code de captura para " + (seller.name || seller.slug);
+      qrImage.width = 480;
+      qrImage.height = 480;
+      const link = document.createElement("a");
+      link.className = "qr-url";
+      link.href = url.href;
+      link.target = "_blank";
+      link.rel = "noreferrer";
+      link.textContent = url.href;
+      link.setAttribute("aria-label", "Abrir link de captura de " + (seller.name || seller.slug));
+      const download = document.createElement("button");
+      download.type = "button";
+      download.className = "btn secondary qr-actions";
+      download.textContent = "Baixar QR";
+      download.addEventListener("click", () => {
+        const a = document.createElement("a");
+        a.download = "qr-" + seller.slug + ".png";
+        a.href = qrImage.src;
+        a.click();
+      });
+      card.append(title, qrImage, link, download);
+      grid.append(card);
+      const qr = qrcode(0, "M");
+      qr.addData(url.href);
+      qr.make();
+      qrImage.src = qr.createDataURL(8, 4);
+      generated++;
+      $("qrStatus").textContent = "Gerando QR Codes… " + generated + " de " + qrSellers.length;
+    }
+    $("qrStatus").textContent = generated + " QR Code(s) oficial(is) gerado(s). Baixe cada imagem ou imprima a lista completa.";
+    $("printQrBtn").classList.toggle("hidden", generated === 0);
+  } catch (error) {
+    $("qrStatus").textContent = "A geração foi interrompida. Tente novamente; os códigos já gerados continuam disponíveis.";
+    console.error(error);
+  } finally {
+    button.disabled = false;
+    button.textContent = "Gerar QR Codes";
+  }
+}
+
+
 $("loginBtn")
   .onclick = login;
+
+$("generateQrBtn").onclick = generateManagerQrs;
+$("printQrBtn").onclick = () => {
+  document.body.classList.add("qr-printing");
+  window.print();
+  setTimeout(() => document.body.classList.remove("qr-printing"), 1000);
+};
 
 
 $("cancelResetBtn").onclick = () => {

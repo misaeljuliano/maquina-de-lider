@@ -103,8 +103,21 @@ export default {
          * ========================================================
          */
 
-        const data =
-          await request.json();
+        if (Number(request.headers.get("content-length") || 0) > 16384) {
+          return new Response(
+            JSON.stringify({ success: false, error: "Solicitação muito grande." }),
+            { status: 413, headers: { "content-type": "application/json; charset=UTF-8" } }
+          );
+        }
+
+        const requestBody = await request.text();
+        if (requestBody.length > 16384) {
+          return new Response(
+            JSON.stringify({ success: false, error: "Solicitação muito grande." }),
+            { status: 413, headers: { "content-type": "application/json; charset=UTF-8" } }
+          );
+        }
+        const data = JSON.parse(requestBody);
 
         const submissionId =
           typeof data.submission_id === "string"
@@ -149,6 +162,10 @@ export default {
           String(
             data.product_searched || ""
           ).trim();
+
+        const isSellerUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(vendor);
+        const validSellerSlug = /^[a-z0-9]+(?:-[a-z0-9]+)*$/i.test(vendor);
+        const validHasClaro = ["", "Não", "Internet", "Celular", "TV", "Combo"].includes(hasClaro);
 
         /*
          * ========================================================
@@ -218,8 +235,13 @@ export default {
 
         if (
           !vendor ||
+          vendor.length > 80 ||
+          !(isSellerUuid || validSellerSlug) ||
           !name ||
+          name.length < 2 ||
+          name.length > 120 ||
           !address ||
+          address.length > 250 ||
           !customerPhone
         ) {
           return new Response(
@@ -238,16 +260,25 @@ export default {
           );
         }
 
+        if (!validHasClaro) {
+          return new Response(
+            JSON.stringify({ success: false, error: "Selecione uma opção válida para o serviço Claro." }),
+            { status: 400, headers: { "content-type": "application/json; charset=UTF-8" } }
+          );
+        }
+
         /*
          * ========================================================
          * FIND SELLER
          * ========================================================
          */
 
+        const sellerLookup = isSellerUuid
+          ? "id=eq." + encodeURIComponent(vendor)
+          : "slug=eq." + encodeURIComponent(vendor);
         const sellerUrl =
           supabaseUrl +
-          "/rest/v1/sellers?slug=eq." +
-          encodeURIComponent(vendor) +
+          "/rest/v1/sellers?" + sellerLookup +
           "&active=eq.true&select=id,slug,name,region,phone";
 
         const sellerResponse =
@@ -276,9 +307,7 @@ export default {
             JSON.stringify({
               success: false,
               error:
-                "Não foi possível validar o vendedor.",
-              details:
-                sellerError
+                "Não foi possível validar o vendedor."
             }),
             {
               status: 500,
@@ -406,9 +435,7 @@ export default {
             JSON.stringify({
               success: false,
               error:
-                "Erro ao gravar lead.",
-              details:
-                responseText
+                "Erro ao gravar lead."
             }),
             {
               status: 500,
@@ -636,6 +663,51 @@ const whatsappMessage =
      */
 
     if (request.method === "GET") {
+      const requestedSellerSlug =
+        String(url.searchParams.get("vendedor") || "").trim();
+      const requestedSellerUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(requestedSellerSlug);
+      const requestedSellerSlugValid = /^[a-z0-9]+(?:-[a-z0-9]+)*$/i.test(requestedSellerSlug) && requestedSellerSlug.length <= 80;
+
+      let selectedSeller = null;
+      if ((requestedSellerUuid || requestedSellerSlugValid) && serviceKey) {
+        try {
+          const sellerResponse = await fetch(
+            supabaseUrl + "/rest/v1/sellers?" +
+              (requestedSellerUuid ? "id=eq." : "slug=eq.") +
+              encodeURIComponent(requestedSellerSlug) +
+              "&active=eq.true&select=id,slug,name",
+            {
+              method: "GET",
+              headers: {
+                apikey: serviceKey,
+                Authorization: "Bearer " + serviceKey
+              }
+            }
+          );
+
+          if (sellerResponse.ok) {
+            const sellers = await sellerResponse.json();
+            selectedSeller = Array.isArray(sellers) ? sellers[0] || null : null;
+          } else {
+            console.error(
+              "Error resolving seller for form:",
+              await sellerResponse.text()
+            );
+          }
+        } catch (error) {
+          console.error("Error resolving seller for form:", error);
+        }
+      }
+
+      const sellerDataForPage = JSON.stringify(
+        selectedSeller
+          ? { id: selectedSeller.id, slug: selectedSeller.slug, name: selectedSeller.name }
+          : null
+      )
+        .replace(/</g, "\\u003c")
+        .replace(/\u2028/g, "\\u2028")
+        .replace(/\u2029/g, "\\u2029");
+
       return new Response(
         `<!DOCTYPE html>
 <html lang="pt-BR">
@@ -906,47 +978,9 @@ button:disabled {
 
 <script>
 
-const vendedores = {
-
-  "josi-misael":
-    "Josi Misael",
-
-  "mauricio-fuertes":
-    "Maurício Fuertes",
-
-  "monique-gomes":
-    "Monique Gomes",
-
-  "juliana-da-silva":
-    "Juliana Da Silva",
-
-  "marcela-cristina":
-    "Marcela Cristina",
-
-  "sandra-da-silva":
-    "Sandra da Silva",
-
-  "patricia-goncalves":
-    "Patrícia Gonçalves",
-
-  "janelle":
-    "Janelle",
-
-  "ana-paula":
-    "Ana Paula",
-
-  "guilherme-santos":
-    "Guilherme Santos"
-
-};
-
-const params =
-  new URLSearchParams(
-    window.location.search
-  );
-
-const vendedor =
-  params.get("vendedor");
+const seller = ${sellerDataForPage};
+const vendedor = seller?.id || null;
+const vendedorNome = seller?.name || null;
 
 const sellerElement =
   document.getElementById(
@@ -978,11 +1012,11 @@ let pendingSubmissionId = null;
 
 if (
   vendedor &&
-  vendedores[vendedor]
+  vendedorNome
 ) {
 
   sellerElement.textContent =
-    vendedores[vendedor];
+    vendedorNome;
 
   vendedorInput.value =
     vendedor;
@@ -991,6 +1025,7 @@ if (
 
   sellerElement.textContent =
     "Vendedor não identificado";
+  submitButton.disabled = true;
 
 }
 
@@ -1088,7 +1123,7 @@ form.addEventListener(
 
     if (
       !vendedor ||
-      !vendedores[vendedor]
+      !vendedorNome
     ) {
 
       alert(
@@ -1259,7 +1294,7 @@ form.addEventListener(
         vendedor;
 
       sellerElement.textContent =
-        vendedores[vendedor];
+        vendedorNome;
 
       /*
        * ========================================================
