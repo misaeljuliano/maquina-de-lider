@@ -262,7 +262,7 @@ th{
 
   <div id="loginForm">
   <div class="field">
-    <label>E-mail</label>
+    <label for="email">E-mail</label>
     <input
       id="email"
       type="email"
@@ -271,7 +271,7 @@ th{
   </div>
 
   <div class="field">
-    <label>Senha</label>
+    <label for="password">Senha</label>
     <input
       id="password"
       type="password"
@@ -292,6 +292,10 @@ th{
 
   <div id="resetPanel" class="auth-panel hidden">
     <h2 class="h">Criar ou recuperar senha</h2>
+    <div class="field">
+      <label for="resetEmail">E-mail corporativo</label>
+      <input id="resetEmail" type="email" autocomplete="username">
+    </div>
     <p class="muted">Enviaremos um link para o e-mail informado. Abra o link neste dispositivo para cadastrar uma nova senha.</p>
     <button class="btn" id="resetBtn" type="button">Enviar link por e-mail</button>
     <div id="resetMessage" class="muted" role="status" aria-live="polite"></div>
@@ -340,6 +344,8 @@ th{
       </button>
 
     </div>
+
+    <div id="logoutError" class="error" role="alert"></div>
 
   </div>
 
@@ -472,10 +478,13 @@ th{
 
 // Keep the recovery panel usable even if the external SDK fails to load.
 document.getElementById("showResetBtn").addEventListener("click", () => {
+  document.getElementById("resetEmail").value =
+    document.getElementById("email").value.trim();
   document.getElementById("loginForm").classList.add("hidden");
   document.getElementById("resetPanel").classList.remove("hidden");
   document.getElementById("resetError").textContent = "";
   document.getElementById("resetMessage").textContent = "";
+  document.getElementById("resetEmail").focus();
 });
 
 const {
@@ -594,11 +603,10 @@ async function loadLeads() {
     "Carregando...";
 
 
-  const {
-    data,
-    error
-  } =
-    await client
+  let data;
+  let error;
+  try {
+    ({ data, error } = await client
       .from("leads")
       .select(
         "id,name,customer_phone,address,has_claro,product_searched,status,created_at,seller_id"
@@ -608,7 +616,10 @@ async function loadLeads() {
         {
           ascending:false
         }
-      );
+      ));
+  } catch (requestError) {
+    error = requestError;
+  }
 
 
   if (error) {
@@ -796,38 +807,27 @@ async function login() {
     "Entrando...";
 
 
-  const {
-    error
-  } =
-    await client.auth.signInWithPassword({
-
-      email:
-        $("email").value.trim(),
-
-      password:
-        $("password").value
-
+  try {
+    const { error } = await client.auth.signInWithPassword({
+      email: $("email").value.trim(),
+      password: $("password").value
     });
 
+    if (error) {
+      $("loginError").textContent =
+        "Acesso não autorizado. Verifique e-mail e senha.";
+      return;
+    }
 
-  $("loginBtn").disabled = false;
-
-  $("loginBtn").textContent =
-    "Entrar";
-
-
-  if (error) {
-
+    await showApp();
+  } catch (requestError) {
     $("loginError").textContent =
-      "Acesso não autorizado. Verifique e-mail e senha.";
-
-    return;
-
+      "Não foi possível entrar agora. Verifique sua conexão e tente novamente.";
+    console.error(requestError);
+  } finally {
+    $("loginBtn").disabled = false;
+    $("loginBtn").textContent = "Entrar";
   }
-
-
-  showApp();
-
 }
 
 
@@ -836,6 +836,7 @@ function showPasswordPanel() {
   $("resetPanel").classList.add("hidden");
   $("passwordPanel").classList.remove("hidden");
   $("loginError").textContent = "";
+  $("passwordError").textContent = "";
 }
 
 
@@ -843,10 +844,10 @@ async function sendPasswordLink() {
   $("resetError").textContent = "";
   $("resetMessage").textContent = "";
 
-  const email = $("email").value.trim();
+  const email = $("resetEmail").value.trim();
   if (!email) {
     $("resetError").textContent = "Informe seu e-mail corporativo para receber o link.";
-    $("email").focus();
+    $("resetEmail").focus();
     return;
   }
 
@@ -916,17 +917,22 @@ async function savePassword() {
 
 async function showApp() {
 
-  const {
-    data
-  } =
-    await client.auth.getUser();
-
-
-  const user =
-    data?.user;
+  let user;
+  try {
+    const { data, error } = await client.auth.getUser();
+    if (error) throw error;
+    user = data?.user;
+  } catch (error) {
+    $("loginError").textContent =
+      "Não foi possível confirmar sua sessão. Verifique sua conexão e tente novamente.";
+    console.error(error);
+    return;
+  }
 
 
   if (!user) {
+    $("loginError").textContent =
+      "Sua sessão não está ativa. Entre novamente ou solicite outro link de recuperação.";
     return;
   }
 
@@ -957,13 +963,32 @@ $("loginBtn")
 
 
 $("cancelResetBtn").onclick = () => {
+  $("email").value = $("resetEmail").value.trim();
   $("resetPanel").classList.add("hidden");
   $("loginForm").classList.remove("hidden");
+  $("resetError").textContent = "";
+  $("resetMessage").textContent = "";
 };
 
 
 $("resetBtn").onclick = sendPasswordLink;
 $("savePasswordBtn").onclick = savePassword;
+
+
+$("email").addEventListener("keydown", event => {
+  if (event.key === "Enter") {
+    event.preventDefault();
+    login();
+  }
+});
+
+
+$("resetEmail").addEventListener("keydown", event => {
+  if (event.key === "Enter") {
+    event.preventDefault();
+    sendPasswordLink();
+  }
+});
 
 
 client.auth.onAuthStateChange((event) => {
@@ -981,9 +1006,8 @@ $("password")
       if (
         event.key === "Enter"
       ) {
-
+        event.preventDefault();
         login();
-
       }
 
     }
@@ -1006,37 +1030,45 @@ $("logoutBtn")
   .onclick =
     async () => {
 
-      await client.auth.signOut();
+      const button = $("logoutBtn");
+      $("logoutError").textContent = "";
+      button.disabled = true;
+      button.textContent = "Saindo...";
 
-      $("app")
-        .classList
-        .add("hidden");
+      try {
+        const { error } = await client.auth.signOut();
+        if (error) throw error;
 
-      $("login")
-        .classList
-        .remove("hidden");
+        $("app").classList.add("hidden");
+        $("login").classList.remove("hidden");
+      } catch (error) {
+        $("logoutError").textContent =
+          "Não foi possível encerrar a sessão. Tente novamente.";
+        console.error(error);
+      } finally {
+        button.disabled = false;
+        button.textContent = "Sair";
+      }
 
     };
 
 
 (async () => {
+  try {
+    const recovery = new URLSearchParams(window.location.hash.slice(1)).get("type") === "recovery";
+    const { data, error } = await client.auth.getSession();
+    if (error) throw error;
 
-  const recovery = new URLSearchParams(window.location.hash.slice(1)).get("type") === "recovery";
-
-  const {
-    data
-  } =
-    await client.auth.getSession();
-
-
-  if (recovery) {
-    showPasswordPanel();
-  } else if (data.session) {
-
-    showApp();
-
+    if (recovery) {
+      showPasswordPanel();
+    } else if (data.session) {
+      await showApp();
+    }
+  } catch (error) {
+    $("loginError").textContent =
+      "Não foi possível verificar sua sessão. Atualize a página e tente novamente.";
+    console.error(error);
   }
-
 })();
 
 </script>
