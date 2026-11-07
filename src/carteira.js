@@ -505,6 +505,11 @@ body{
   background:#333
 }
 
+.btn:disabled{
+  background:#666;
+  cursor:not-allowed
+}
+
 .error{
   color:#b00020;
   margin-top:10px;
@@ -822,11 +827,11 @@ th{
     <form id="sellerForm" class="filters" style="grid-template-columns:repeat(auto-fit,minmax(190px,1fr));margin:14px 0">
       <input id="sellerName" placeholder="Nome do vendedor" required maxlength="120">
       <input id="sellerEmail" type="email" placeholder="E-mail" required maxlength="254">
-      <input id="sellerPhone" type="tel" placeholder="WhatsApp com DDD" required>
+      <input id="sellerPhone" type="tel" placeholder="WhatsApp com DDD (obrigatório)" aria-label="WhatsApp com DDD (obrigatório)" required>
       <input id="sellerRegion" placeholder="Região" value="Santos" required maxlength="80">
       <select id="sellerExecutive" class="hidden"><option value="">Selecione o executivo</option></select>
       <select id="sellerSupervisor" class="hidden"><option value="">Selecione o supervisor</option></select>
-      <button id="sellerCreateBtn" class="btn" type="submit">Cadastrar vendedor</button>
+      <button id="sellerCreateBtn" class="btn" type="submit" aria-describedby="sellerSetupStatus" disabled>Cadastrar vendedor</button>
     </form>
     <div id="sellerManagementStatus" class="muted" role="status" aria-live="polite"></div>
     <div style="overflow:auto;margin-top:12px">
@@ -1574,6 +1579,7 @@ function sellerApiHeaders() {
 async function loadSellerManagement() {
   const status = $("sellerSetupStatus");
   const rows = $("sellerManagementRows");
+  $("sellerCreateBtn").disabled = true;
   status.textContent = "Carregando equipe…";
   try {
     const headers = await sellerApiHeaders();
@@ -1666,6 +1672,10 @@ function sellerQrPng(url) {
 async function createSeller(event) {
   event.preventDefault();
   const button = $("sellerCreateBtn"); const status = $("sellerManagementStatus");
+  if (!sellerTeamData?.readiness?.ready) {
+    status.textContent = "Cadastro indisponível até o envio de e-mail ser configurado.";
+    return;
+  }
   if (typeof window.qrcode !== "function") { status.textContent = "Gerador de QR indisponível. Atualize a página."; return; }
   button.disabled = true; button.textContent = "Criando e enviando e-mail…"; status.textContent = "";
   try {
