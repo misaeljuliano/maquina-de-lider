@@ -61,9 +61,7 @@ async function requireLeader(request, env) {
 
 function communicationReadiness(env) {
   const emailReady = !!(env.RESEND_API_KEY && env.EMAIL_FROM);
-  const whatsappReady = !!(env.WHATSAPP_ACCESS_TOKEN && env.WHATSAPP_PHONE_NUMBER_ID
-    && env.WHATSAPP_TEMPLATE_NAME && env.WHATSAPP_API_VERSION && /^v\d+\.\d+$/.test(env.WHATSAPP_API_VERSION));
-  return { email: emailReady, whatsapp: whatsappReady, ready: emailReady && whatsappReady };
+  return { email: emailReady, whatsapp: false, whatsappMode: "manual", ready: emailReady };
 }
 
 function qrBase64(value) {
@@ -109,37 +107,6 @@ async function sendSellerEmail(env, email, name, qrUrl, qrPng, inviteUrl, slug) 
       text: "Olá " + name + ". Acesse sua carteira pelo convite e use o QR Code em anexo. Link do QR: " + qrUrl + "\nAtive seu acesso: " + inviteUrl,
       html: "<p>Olá " + safeHtml(name) + ".</p><p>Seu acesso à Minha Carteira está pronto. Abra o convite para definir sua senha.</p><p><a href=\"" + safeHtml(inviteUrl) + "\">Ativar meu acesso</a></p><p>Este é seu QR Code oficial. O link permanente é <a href=\"" + safeHtml(qrUrl) + "\">" + safeHtml(qrUrl) + "</a>.</p><p>O arquivo PNG do QR Code está anexado.</p>",
       attachments: [{ filename: "qr-" + slug + ".png", content: png }]
-    })
-  });
-  return { ok: response.ok, status: response.status };
-}
-
-async function sendSellerWhatsApp(env, phone, name, qrUrl, qrPng) {
-  const apiBase = "https://graph.facebook.com/" + env.WHATSAPP_API_VERSION;
-  const bytes = Uint8Array.from(atob(qrPng.split(",")[1]), char => char.charCodeAt(0));
-  const form = new FormData();
-  form.append("messaging_product", "whatsapp");
-  form.append("file", new Blob([bytes], { type: "image/png" }), "qr-vendedor.png");
-  const media = await fetch(apiBase + "/" + encodeURIComponent(env.WHATSAPP_PHONE_NUMBER_ID) + "/media", {
-    method: "POST", headers: { Authorization: "Bearer " + env.WHATSAPP_ACCESS_TOKEN }, body: form
-  });
-  if (!media.ok) return { ok: false, status: media.status };
-  const mediaData = await media.json();
-  if (!mediaData.id) return { ok: false, status: 502 };
-  const recipient = phone.startsWith("55") ? phone : "55" + phone;
-  const response = await fetch(apiBase + "/" + encodeURIComponent(env.WHATSAPP_PHONE_NUMBER_ID) + "/messages", {
-    method: "POST",
-    headers: { Authorization: "Bearer " + env.WHATSAPP_ACCESS_TOKEN, "content-type": "application/json" },
-    body: JSON.stringify({
-      messaging_product: "whatsapp", to: recipient, type: "template",
-      template: {
-        name: env.WHATSAPP_TEMPLATE_NAME,
-        language: { code: env.WHATSAPP_TEMPLATE_LANGUAGE || "pt_BR" },
-        components: [
-          { type: "header", parameters: [{ type: "image", image: { id: mediaData.id } }] },
-          { type: "body", parameters: [{ type: "text", text: name }, { type: "text", text: qrUrl }] }
-        ]
-      }
     })
   });
   return { ok: response.ok, status: response.status };
@@ -221,7 +188,7 @@ async function leaderSellersApi(request, env, url) {
   }
 
   if (request.method === "POST" && url.pathname === "/api/sellers") {
-    if (!readiness.ready) return jsonResponse({ error: "Configure o e-mail e o WhatsApp oficial antes de cadastrar vendedores.", readiness }, 503);
+    if (!readiness.ready) return jsonResponse({ error: "O envio automático de e-mail ainda não está configurado.", readiness }, 503);
     const contentLength = Number(request.headers.get("content-length") || 0);
     if (contentLength > 220000) return jsonResponse({ error: "Imagem QR muito grande." }, 413);
     let body;
@@ -326,7 +293,7 @@ async function leaderSellersApi(request, env, url) {
       if (body.active) {
         const onboarding = await serviceRequest(env, "/rest/v1/seller_onboarding?seller_id=eq." + id + "&select=email_status,whatsapp_status");
         const state = onboarding.data?.[0];
-        if (state && (state.email_status !== "sent" || state.whatsapp_status !== "sent")) return jsonResponse({ error: "O vendedor só pode ser reativado depois que os dois envios forem confirmados." }, 409);
+        if (state && state.email_status !== "sent") return jsonResponse({ error: "O vendedor só pode ser reativado depois que o convite por e-mail for confirmado." }, 409);
         if (!target.seller_user_id) return jsonResponse({ error: "Este vendedor ainda não possui conta vinculada." }, 409);
       }
       const update = await serviceRequest(env, "/rest/v1/sellers?id=eq." + id, {
@@ -337,7 +304,7 @@ async function leaderSellersApi(request, env, url) {
       return jsonResponse({ ok: true, active: body.active });
     }
 
-    if (!readiness.ready) return jsonResponse({ error: "Configure o e-mail e o WhatsApp oficial antes de reenviar convites." , readiness }, 503);
+    if (!readiness.ready) return jsonResponse({ error: "O envio automático de e-mail ainda não está configurado.", readiness }, 503);
     const raw = await request.text();
     if (raw.length > 220000) return jsonResponse({ error: "Imagem QR muito grande." }, 413);
     let body;
@@ -353,7 +320,7 @@ async function leaderSellersApi(request, env, url) {
     const inviteUrl = invite?.data?.properties?.action_link || invite?.data?.action_link;
     if (invite && (!invite.ok || typeof inviteUrl !== "string")) return jsonResponse({ error: "Não foi possível recriar o convite por e-mail." }, 502);
     return await deliverSellerOnboarding(env, {
-      id, slug: target.slug, name: target.name, email, phone: target.phone, userId: target.seller_user_id,
+      id, slug: target.slug, name: target.name, email, phone: target.phone, userId: target.seller_user_id, active: target.active,
       inviteUrl, qrPng, retry: true, onboarding: onboarding.data[0]
     });
   }
@@ -364,31 +331,26 @@ async function leaderSellersApi(request, env, url) {
 async function deliverSellerOnboarding(env, seller) {
   const qrUrl = QR_PRODUCTION_ORIGIN + "/?vendedor=" + encodeURIComponent(seller.id);
   const emailStatus = seller.retry ? seller.onboarding.email_status : "pending";
-  const whatsappStatus = seller.retry ? seller.onboarding.whatsapp_status : "pending";
   let emailResult = { ok: emailStatus === "sent", status: 200 };
-  let whatsappResult = { ok: whatsappStatus === "sent", status: 200 };
   if (emailStatus !== "sent") {
     try { emailResult = await sendSellerEmail(env, seller.email, seller.name, qrUrl, seller.qrPng, seller.inviteUrl, seller.slug); }
     catch { emailResult = { ok: false, status: 502 }; }
   }
-  if (whatsappStatus !== "sent") {
-    try { whatsappResult = await sendSellerWhatsApp(env, seller.phone, seller.name, qrUrl, seller.qrPng); }
-    catch { whatsappResult = { ok: false, status: 502 }; }
-  }
   const nextEmail = emailResult.ok ? "sent" : "failed";
-  const nextWhatsapp = whatsappResult.ok ? "sent" : "failed";
+  // WhatsApp stays manual so seller onboarding cannot trigger Meta message charges.
+  const nextWhatsapp = seller.onboarding?.whatsapp_status || "pending";
   await serviceRequest(env, "/rest/v1/seller_onboarding?seller_id=eq." + seller.id, {
     method: "PATCH", headers: { "content-type": "application/json", Prefer: "return=minimal" },
     body: JSON.stringify({
       email_status: nextEmail, whatsapp_status: nextWhatsapp,
       email_error: emailResult.ok ? null : "Falha no provedor de e-mail (HTTP " + emailResult.status + ")",
-      whatsapp_error: whatsappResult.ok ? null : "Falha no provedor de WhatsApp (HTTP " + whatsappResult.status + ")",
+      whatsapp_error: null,
       attempt_count: (seller.onboarding?.attempt_count || 0) + 1,
       updated_at: new Date().toISOString()
     })
   });
-  const active = nextEmail === "sent" && nextWhatsapp === "sent";
-  if (active) {
+  const active = seller.retry ? !!seller.active : nextEmail === "sent";
+  if (!seller.retry && active) {
     await serviceRequest(env, "/rest/v1/sellers?id=eq." + seller.id, {
       method: "PATCH", headers: { "content-type": "application/json", Prefer: "return=minimal" },
       body: JSON.stringify({ active: true })
@@ -396,9 +358,22 @@ async function deliverSellerOnboarding(env, seller) {
   }
   return jsonResponse({
     created: !seller.retry, id: seller.id, active,
-    emailStatus: nextEmail, whatsappStatus: nextWhatsapp,
-    message: active ? "Convite e QR enviados. O vendedor já pode acessar a carteira." : "Cadastro pendente: os acessos permanecem bloqueados até confirmar os dois envios."
+    emailStatus: nextEmail, whatsappStatus: "manual",
+    whatsappUrl: buildWhatsappInviteUrl(seller.phone, seller.name, qrUrl),
+    message: nextEmail !== "sent"
+      ? "Cadastro salvo, mas o e-mail não foi confirmado. O acesso continua bloqueado; reenvie o e-mail após corrigir o problema."
+      : active
+        ? "Convite e QR enviados por e-mail. O acesso foi liberado. O WhatsApp pode ser enviado manualmente, sem custo da Meta."
+        : "E-mail confirmado. O vendedor continua desligado; você pode reativá-lo e enviar a mensagem pronta pelo WhatsApp, sem custo da Meta."
   }, seller.retry ? 200 : 201);
+}
+
+function buildWhatsappInviteUrl(phone, name, qrUrl) {
+  const digits = phoneDigits(phone);
+  if (![10, 11].includes(digits.length)) return "";
+  const recipient = "55" + digits;
+  const message = "Olá, " + name + "! Seu QR Code oficial da Máquina de Líder está pronto: " + qrUrl + "\n\nO convite para acessar sua carteira foi enviado para seu e-mail.";
+  return "https://wa.me/" + recipient + "?text=" + encodeURIComponent(message);
 }
 
 async function routeLeaderSellers(request, env, url) {
@@ -833,7 +808,7 @@ th{
 
   <section id="sellerManagementPanel" class="card hidden" style="margin-top:18px">
     <h2 class="h">Equipe de vendedores</h2>
-    <p class="muted">Cadastre e ative vendedores da sua equipe. O acesso só é liberado depois da confirmação do e-mail e do WhatsApp.</p>
+    <p class="muted">O convite e o QR Code são enviados automaticamente por e-mail. O botão do WhatsApp abre uma mensagem pronta para envio manual, sem cobrança da Meta.</p>
     <p id="sellerSetupStatus" class="muted" role="status" aria-live="polite"></p>
     <form id="sellerForm" class="filters" style="grid-template-columns:repeat(auto-fit,minmax(190px,1fr));margin:14px 0">
       <input id="sellerName" placeholder="Nome do vendedor" required maxlength="120">
@@ -1499,12 +1474,9 @@ async function loadSellerManagement() {
     const payload = await response.json();
     if (!response.ok) throw new Error(payload.error || "Não foi possível carregar a equipe.");
     sellerTeamData = payload;
-    const readinessText = [];
-    if (!payload.readiness?.email) readinessText.push("E-mail automático ainda não configurado");
-    if (!payload.readiness?.whatsapp) readinessText.push("WhatsApp oficial ainda não configurado");
-    status.textContent = readinessText.length
-      ? readinessText.join(" · ") + ". Novos cadastros serão liberados quando os dois canais estiverem prontos."
-      : "E-mail e WhatsApp prontos para envio automático.";
+    status.textContent = payload.readiness?.email
+      ? "E-mail automático pronto. O WhatsApp será enviado manualmente, sem custo da Meta."
+      : "Envio automático de e-mail ainda não configurado. Novos cadastros ficam indisponíveis até configurá-lo.";
     $("sellerCreateBtn").disabled = !payload.readiness?.ready;
     const execSelect = $("sellerExecutive");
     const supSelect = $("sellerSupervisor");
@@ -1519,8 +1491,10 @@ async function loadSellerManagement() {
     (payload.sellers || []).forEach(seller => {
       const tr = document.createElement("tr");
       const state = seller.active ? "Ativo" : "Desligado";
+      const emailStatus = seller.onboarding?.email_status;
+      const emailLabel = emailStatus === "sent" ? "enviado" : emailStatus === "failed" ? "falhou" : "pendente";
       const delivery = seller.onboarding
-        ? "E-mail: " + seller.onboarding.email_status + " · WhatsApp: " + seller.onboarding.whatsapp_status
+        ? "E-mail: " + emailLabel + " · WhatsApp: " + (emailStatus === "sent" ? "manual (sem custo)" : "após confirmar o e-mail")
         : "Sem controle de envio";
       const name = document.createElement("td"); name.textContent = seller.name;
       const region = document.createElement("td"); region.textContent = seller.region || "—";
@@ -1531,9 +1505,15 @@ async function loadSellerManagement() {
       action.textContent = seller.active ? "Desligar" : "Reativar";
       action.addEventListener("click", () => setSellerActive(seller, !seller.active));
       actionCell.append(action);
-      if (seller.onboarding && (seller.onboarding.email_status !== "sent" || seller.onboarding.whatsapp_status !== "sent")) {
-        const retry = document.createElement("button"); retry.type = "button"; retry.className = "btn secondary"; retry.style.marginLeft = "6px"; retry.textContent = "Reenviar pendentes";
+      if (seller.onboarding && seller.onboarding.email_status !== "sent") {
+        const retry = document.createElement("button"); retry.type = "button"; retry.className = "btn secondary"; retry.style.marginLeft = "6px"; retry.textContent = "Reenviar e-mail";
         retry.addEventListener("click", () => retrySellerDelivery(seller)); actionCell.append(retry);
+      }
+      if (seller.onboarding && seller.onboarding.email_status === "sent" && seller.phone) {
+        const qrUrl = new URL("/", QR_PRODUCTION_ORIGIN); qrUrl.searchParams.set("vendedor", seller.id);
+        const whatsapp = document.createElement("a"); whatsapp.className = "btn secondary"; whatsapp.style.marginLeft = "6px";
+        whatsapp.textContent = "Abrir WhatsApp"; whatsapp.href = buildWhatsappInviteUrl(seller.phone, seller.name, qrUrl.href);
+        whatsapp.target = "_blank"; whatsapp.rel = "noopener noreferrer"; actionCell.append(whatsapp);
       }
       tr.append(name, region, active, sends, actionCell); rows.append(tr);
     });
@@ -1557,7 +1537,7 @@ async function createSeller(event) {
   event.preventDefault();
   const button = $("sellerCreateBtn"); const status = $("sellerManagementStatus");
   if (typeof window.qrcode !== "function") { status.textContent = "Gerador de QR indisponível. Atualize a página."; return; }
-  button.disabled = true; button.textContent = "Criando e enviando…"; status.textContent = "";
+  button.disabled = true; button.textContent = "Criando e enviando e-mail…"; status.textContent = "";
   try {
     const id = crypto.randomUUID();
     const canonical = new URL("/", QR_PRODUCTION_ORIGIN); canonical.searchParams.set("vendedor", id);
@@ -1572,15 +1552,15 @@ async function createSeller(event) {
     }) });
     const result = await response.json(); if (!response.ok) throw new Error(result.error || "Não foi possível cadastrar.");
     status.textContent = result.message || "Cadastro processado.";
-    if (result.active) $("sellerForm").reset();
+    if (result.created) $("sellerForm").reset();
     await loadSellerManagement();
     if (isManager) await loadManagerQrSellers();
   } catch (error) { status.textContent = error.message; }
-  finally { button.disabled = !sellerTeamData?.readiness?.ready; button.textContent = "Cadastrar vendedor"; }
+  finally { button.disabled = !sellerTeamData?.readiness?.email; button.textContent = "Cadastrar vendedor"; }
 }
 
 async function retrySellerDelivery(seller) {
-  const status = $("sellerManagementStatus"); status.textContent = "Reenviando mensagens pendentes…";
+  const status = $("sellerManagementStatus"); status.textContent = "Reenviando convite por e-mail…";
   try {
     const canonical = new URL("/", QR_PRODUCTION_ORIGIN); canonical.searchParams.set("vendedor", seller.id);
     const qr = qrcode(0, "M"); qr.addData(canonical.href); qr.make();
