@@ -477,17 +477,21 @@ function page(config, publicOrigin) {
 <style>
 *{box-sizing:border-box}
 
+html{color-scheme:light}
+
 body{
   margin:0;
-  background:#f5f5f5;
-  font-family:Arial,sans-serif;
-  color:#222
+  background:#f3f4f6;
+  font-family:Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;
+  color:#17191d;
+  line-height:1.5
 }
 
 .top{
-  background:#d50000;
+  background:linear-gradient(110deg,#c9000b,#ed1b2f);
   color:#fff;
-  padding:18px 20px
+  padding:18px max(20px,calc((100vw - 1440px)/2));
+  box-shadow:0 4px 18px rgba(103,0,7,.18)
 }
 
 .brand{
@@ -501,16 +505,17 @@ body{
 }
 
 .wrap{
-  max-width:1180px;
+  max-width:1480px;
   margin:24px auto;
-  padding:0 16px
+  padding:0 22px
 }
 
 .card{
   background:#fff;
-  border-radius:14px;
-  padding:20px;
-  box-shadow:0 2px 12px rgba(0,0,0,.08);
+  border:1px solid #e6e8ec;
+  border-radius:18px;
+  padding:22px;
+  box-shadow:0 8px 28px rgba(25,31,42,.06);
   margin-bottom:18px
 }
 
@@ -524,9 +529,10 @@ body{
 }
 
 .h{
-  font-size:22px;
+  font-size:24px;
   font-weight:800;
-  margin:0 0 14px
+  margin:0 0 14px;
+  letter-spacing:-.025em
 }
 
 .muted{
@@ -548,21 +554,32 @@ body{
 .field input,
 .field select{
   width:100%;
-  padding:12px;
-  border:1px solid #ccc;
-  border-radius:9px;
-  font-size:15px
+  min-height:48px;
+  padding:12px 14px;
+  border:1px solid #cfd2d8;
+  border-radius:11px;
+  font-size:15px;
+  background:#fff;
+  transition:border-color .15s,box-shadow .15s
+}
+
+.field input:focus,.field select:focus,.filters input:focus,.filters select:focus{
+  outline:none;border-color:#d50000;box-shadow:0 0 0 4px rgba(213,0,0,.11)
 }
 
 .btn{
   border:0;
-  border-radius:9px;
-  padding:12px 16px;
+  border-radius:11px;
+  padding:12px 17px;
   background:#d50000;
   color:#fff;
   font-weight:800;
-  cursor:pointer
+  cursor:pointer;
+  transition:transform .15s,background .15s,box-shadow .15s
 }
+
+.btn:hover:not(:disabled){background:#b90000;box-shadow:0 6px 14px rgba(213,0,0,.16)}
+.btn:focus-visible,.link-button:focus-visible{outline:3px solid #25282e;outline-offset:3px}
 
 .btn.secondary{
   background:#333
@@ -604,10 +621,10 @@ body{
 }
 
 .stat{
-  background:#fafafa;
-  border:1px solid #eee;
-  border-radius:10px;
-  padding:14px
+  background:linear-gradient(145deg,#fff,#f8f9fb);
+  border:1px solid #e6e8ec;
+  border-radius:14px;
+  padding:17px
 }
 
 .stat b{
@@ -633,10 +650,12 @@ body{
 
 .filters input,
 .filters select{
-  padding:12px;
-  border:1px solid #ccc;
-  border-radius:9px;
-  font-size:14px
+  min-height:48px;
+  padding:12px 14px;
+  border:1px solid #cfd2d8;
+  border-radius:11px;
+  font-size:14px;
+  background:#fff
 }
 
 .table-wrap{
@@ -651,8 +670,8 @@ table{
 }
 
 th,td{
-  padding:11px 9px;
-  border-bottom:1px solid #eee;
+  padding:13px 11px;
+  border-bottom:1px solid #e9ebef;
   text-align:left;
   font-size:13px;
   vertical-align:top
@@ -660,7 +679,9 @@ th,td{
 
 th{
   font-size:12px;
-  background:#fafafa;
+  background:#f7f8fa;
+  color:#434852;
+  font-weight:750;
   position:sticky;
   top:0
 }
@@ -669,7 +690,8 @@ th{
   display:inline-block;
   padding:5px 8px;
   border-radius:20px;
-  background:#eee;
+  background:#f0f1f3;
+  color:#292c32;
   font-size:11px;
   font-weight:700
 }
@@ -727,12 +749,17 @@ th{
   }
 
   .wrap{
-    padding:0 10px
+    padding:0 12px
   }
 
   .card{
-    padding:14px
+    padding:16px;
+    border-radius:15px
   }
+
+  .top{padding:16px 18px}
+  .wrap{margin:16px auto}
+  .table-wrap{border:1px solid #e8eaee;border-radius:12px}
 }
 </style>
 </head>

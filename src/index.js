@@ -729,38 +729,57 @@ const whatsappMessage =
   box-sizing: border-box;
 }
 
+html { color-scheme: light; }
+
 body {
   margin: 0;
-  font-family: Arial, sans-serif;
-  background: #f5f5f5;
-  color: #222;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  background: #f4f5f7;
+  color: #17191d;
+  line-height: 1.5;
 }
 
 .container {
   width: 100%;
-  max-width: 480px;
+  max-width: 620px;
   margin: auto;
-  padding: 20px;
+  padding: 28px 20px 48px;
 }
 
 .card {
   background: white;
-  border-radius: 18px;
-  padding: 24px;
+  border: 1px solid #e7e8eb;
+  border-radius: 24px;
+  padding: clamp(24px, 5vw, 42px);
   margin-top: 20px;
-  box-shadow: 0 4px 20px rgba(0,0,0,.10);
+  box-shadow: 0 16px 44px rgba(18, 24, 34, .08);
 }
 
 h1 {
   margin: 0 0 8px;
-  font-size: 30px;
+  font-size: clamp(30px, 6vw, 42px);
+  line-height: 1.08;
   color: #e30613;
+  letter-spacing: -.04em;
 }
 
 .subtitle {
-  color: #666;
-  margin-bottom: 24px;
-  font-size: 16px;
+  color: #5d626b;
+  margin-bottom: 22px;
+  font-size: 17px;
+}
+
+.card::before {
+  content: "ATENDIMENTO CLARO · PORTA A PORTA";
+  display: inline-flex;
+  margin-bottom: 16px;
+  color: #a20a12;
+  background: #fff0f1;
+  border-radius: 999px;
+  padding: 6px 11px;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: .08em;
 }
 
 label {
@@ -773,28 +792,50 @@ label {
 input,
 select {
   width: 100%;
-  padding: 14px;
-  border: 1px solid #ccc;
-  border-radius: 10px;
+  min-height: 52px;
+  padding: 13px 15px;
+  border: 1px solid #cfd2d8;
+  border-radius: 12px;
   font-size: 16px;
   background: white;
+  color: #17191d;
+  transition: border-color .15s, box-shadow .15s;
+}
+
+input:focus, select:focus {
+  outline: none;
+  border-color: #e30613;
+  box-shadow: 0 0 0 4px rgba(227, 6, 19, .12);
 }
 
 button {
   width: 100%;
-  margin-top: 24px;
-  padding: 16px;
+  min-height: 54px;
+  margin-top: 22px;
+  padding: 15px 18px;
   border: 0;
-  border-radius: 10px;
+  border-radius: 13px;
   background: #e30613;
   color: white;
   font-size: 17px;
   font-weight: bold;
   cursor: pointer;
+  box-shadow: 0 8px 18px rgba(227, 6, 19, .2);
+  transition: transform .15s, background .15s, box-shadow .15s;
 }
 
-button:active {
-  transform: scale(.99);
+button:hover:not(:disabled) {
+  background: #c9000b;
+  box-shadow: 0 10px 22px rgba(227, 6, 19, .25);
+}
+
+button:active { transform: translateY(1px); }
+button:focus-visible { outline: 3px solid #17191d; outline-offset: 3px; }
+
+@media (max-width: 480px) {
+  .container { padding: 12px 12px 28px; }
+  .card { border-radius: 18px; }
+  label { margin-top: 15px; }
 }
 
 button:disabled {
@@ -802,9 +843,10 @@ button:disabled {
 }
 
 .seller {
-  background: #f0f0f0;
-  padding: 12px;
-  border-radius: 10px;
+  background: #f6f7f8;
+  border: 1px solid #e7e8eb;
+  padding: 13px 15px;
+  border-radius: 12px;
   margin-bottom: 18px;
   font-size: 14px;
 }
