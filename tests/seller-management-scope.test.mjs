@@ -38,7 +38,15 @@ async function exerciseLeaderScope(t, role) {
     requests.push({ url, method: init.method || "GET" });
     if (url.hostname !== "staging.supabase.co") throw new Error("Unexpected host " + url.hostname);
     if (url.pathname === "/auth/v1/user") return Response.json({ id: leaderId });
-    if (url.pathname === "/rest/v1/user_roles") return Response.json([{ role }]);
+    if (url.pathname === "/rest/v1/user_roles") {
+      const userFilter = url.searchParams.get("user_id") || "";
+      if (userFilter.startsWith("eq.")) {
+        const id = userFilter.slice(3);
+        return Response.json(id === leaderId ? [{ user_id: id, role }] : [{ user_id: id, role: "VENDEDOR" }]);
+      }
+      const ids = userFilter.match(/in\.\((.*)\)/)?.[1]?.split(",") || [];
+      return Response.json(ids.map(id => ({ user_id: id, role: id === leaderId ? role : id === ownSeller.seller_user_id ? "VENDEDOR" : id === otherLeaderId ? "EXECUTIVO" : id === executiveId ? "EXECUTIVO" : id === supervisorId ? "SUPERVISOR" : "VENDEDOR" })));
+    }
     if (url.pathname === "/auth/v1/admin/users/" + executiveId) {
       return Response.json({ user_metadata: { name: "Executivo teste" } });
     }

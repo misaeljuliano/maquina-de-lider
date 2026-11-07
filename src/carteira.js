@@ -137,14 +137,14 @@ async function sendSellerEmail(env, email, name, qrUrl, qrPng, inviteUrl, slug) 
   return { ok: response.ok, status: response.status, errorMessage };
 }
 
-async function createInviteLink(env, email, name) {
+async function createInviteLink(env, email, name, role = "VENDEDOR") {
   const redirect = encodeURIComponent(env.WALLET_PUBLIC_ORIGIN + "/carteira");
   return serviceRequest(env, "/auth/v1/admin/generate_link?redirect_to=" + redirect, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
       type: "invite", email,
-      data: { name, role: "VENDEDOR" }
+      data: { name, role }
 
     })
   });
@@ -178,8 +178,8 @@ async function createRecoveryLink(env, email) {
   });
 }
 
-async function createSellerAuthLink(env, email, name) {
-  const invite = await createInviteLink(env, email, name);
+async function createSellerAuthLink(env, email, name, role = "VENDEDOR") {
+  const invite = await createInviteLink(env, email, name, role);
   const inviteUrl = generatedActionLink(invite);
   const userId = generatedUserId(invite);
   if (invite.ok && SELLER_ID_RE.test(userId || "") && typeof inviteUrl === "string") {
@@ -208,6 +208,13 @@ async function getTeamRows(env, leader) {
   return result.ok && Array.isArray(result.data) ? result.data : null;
 }
 
+async function getLeaderProfile(env, userId) {
+  if (!SELLER_ID_RE.test(userId || "")) return null;
+  const result = await serviceRequest(env, "/rest/v1/sellers?seller_user_id=eq." + userId +
+    "&select=id,slug,name,active,seller_user_id,supervisor_user_id,executive_user_id&limit=1");
+  return result.ok && Array.isArray(result.data) ? result.data[0] || null : null;
+}
+
 async function getAdminUserLabel(env, userId) {
   if (!SELLER_ID_RE.test(userId || "")) return "";
   const result = await serviceRequest(env, "/auth/v1/admin/users/" + userId);
@@ -219,7 +226,7 @@ async function getSellerRoles(env, userIds) {
   const ids = [...new Set(userIds.filter(id => SELLER_ID_RE.test(id || "")))];
   if (!ids.length) return {};
   const response = await serviceRequest(env, "/rest/v1/user_roles?user_id=in.(" + ids.join(",") + ")&select=user_id,role");
-  if (!response.ok) return {};
+  if (!response.ok || !Array.isArray(response.data)) return null;
   return Object.fromEntries((response.data || []).map(item => [item.user_id, item.role]));
 }
 
@@ -230,6 +237,100 @@ async function getOnboardingMap(env, sellers) {
   const response = await serviceRequest(env, "/rest/v1/seller_onboarding?seller_id=in.(" + ids.join(",") + ")&select=seller_id,email_status,whatsapp_status,email_error,whatsapp_error,attempt_count");
   if (!response.ok) return new Map();
   return new Map((response.data || []).map(item => [item.seller_id, item]));
+}
+
+async function transferTeamMember(env, leader, target, targetRole, body) {
+  const team = await getTeamRows(env, leader);
+  if (!team) return jsonResponse({ error: "Não foi possível validar os limites da equipe." }, 503);
+  const leaderProfile = leader.role === "SUPERVISOR" ? await getLeaderProfile(env, leader.user.id) : null;
+  const roleMap = await getSellerRoles(env, [
+    ...team.map(item => item.seller_user_id),
+    ...team.map(item => item.executive_user_id),
+    ...team.map(item => item.supervisor_user_id),
+    leaderProfile?.executive_user_id
+  ]);
+  if (!roleMap) return jsonResponse({ error: "Não foi possível confirmar os perfis da equipe." }, 503);
+  const destinationExecutive = String(body.executiveUserId || "") || null;
+  const destinationSupervisor = String(body.supervisorUserId || "") || null;
+  let executiveUserId = null;
+  let supervisorUserId = null;
+  let moveTeam = false;
+
+  if (targetRole === "EXECUTIVO") {
+    return jsonResponse({ error: "Um executivo não pode ser transferido para outra carteira." }, 400);
+  }
+
+  if (targetRole === "SUPERVISOR") {
+    if (leader.role !== "GERENTE") return jsonResponse({ error: "Somente o gerente pode transferir um supervisor." }, 403);
+    if (destinationSupervisor) return jsonResponse({ error: "Selecione o executivo de destino do supervisor." }, 400);
+    if (destinationExecutive && (roleMap[destinationExecutive] !== "EXECUTIVO" ||
+        !team.some(item => item.seller_user_id === destinationExecutive && item.active))) {
+      return jsonResponse({ error: "O executivo de destino não está ativo na equipe." }, 400);
+    }
+    executiveUserId = destinationExecutive;
+    moveTeam = body.moveTeam === true;
+    if (body.moveTeam !== true && body.moveTeam !== false) {
+      return jsonResponse({ error: "Escolha se os vendedores da equipe acompanham o supervisor." }, 400);
+    }
+  } else if (targetRole === "VENDEDOR") {
+    const inScope = leader.role === "GERENTE"
+      || (leader.role === "EXECUTIVO" && target.executive_user_id === leader.user.id)
+      || (leader.role === "SUPERVISOR" && target.supervisor_user_id === leader.user.id);
+    if (!inScope) return jsonResponse({ error: "Esse vendedor não pertence à sua equipe." }, 403);
+
+    if (destinationSupervisor) {
+      const supervisor = team.find(item => item.seller_user_id === destinationSupervisor && item.active);
+      if (!supervisor || roleMap[destinationSupervisor] !== "SUPERVISOR") {
+        return jsonResponse({ error: "O supervisor de destino não está ativo na sua equipe." }, 400);
+      }
+      if (leader.role === "SUPERVISOR") return jsonResponse({ error: "Supervisor só pode retirar vendedores da própria equipe." }, 403);
+      executiveUserId = supervisor.executive_user_id || null;
+      supervisorUserId = destinationSupervisor;
+      if (leader.role === "EXECUTIVO" && executiveUserId !== leader.user.id) {
+        return jsonResponse({ error: "O supervisor de destino pertence a outro executivo." }, 403);
+      }
+    } else if (leader.role === "SUPERVISOR") {
+      if (!leaderProfile?.active || !leaderProfile.executive_user_id) {
+        return jsonResponse({ error: "Não foi possível confirmar o executivo responsável pelo supervisor." }, 409);
+      }
+      if (destinationExecutive !== leaderProfile.executive_user_id) {
+        return jsonResponse({ error: "Supervisor só pode devolver um vendedor à carteira do próprio executivo." }, 403);
+      }
+      executiveUserId = leaderProfile.executive_user_id;
+    } else if (leader.role === "EXECUTIVO") {
+      if (destinationExecutive && destinationExecutive !== leader.user.id) {
+        return jsonResponse({ error: "O vendedor só pode permanecer nesta equipe executiva." }, 403);
+      }
+      executiveUserId = leader.user.id;
+    } else {
+      executiveUserId = destinationExecutive;
+      if (executiveUserId && (roleMap[executiveUserId] !== "EXECUTIVO" ||
+          !team.some(item => item.seller_user_id === executiveUserId && item.active))) {
+        return jsonResponse({ error: "O executivo de destino não está ativo na equipe." }, 400);
+      }
+    }
+  } else {
+    return jsonResponse({ error: "Perfil sem transferência disponível." }, 400);
+  }
+
+  const response = await serviceRequest(env, "/rest/v1/rpc/transfer_seller_hierarchy", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      p_seller_id: target.id,
+      p_expected_supervisor_user_id: target.supervisor_user_id || null,
+      p_expected_executive_user_id: target.executive_user_id || null,
+      p_new_supervisor_user_id: supervisorUserId,
+      p_new_executive_user_id: executiveUserId,
+      p_move_team: moveTeam
+    })
+  });
+  if (!response.ok) {
+    return jsonResponse({ error: response.status === 409
+      ? "A equipe mudou durante a transferência. Atualize a carteira e tente novamente."
+      : "Não foi possível concluir a transferência da equipe." }, response.status === 409 ? 409 : 503);
+  }
+  return jsonResponse({ ok: true, role: targetRole, executiveUserId, supervisorUserId, moveTeam });
 }
 
 async function leaderSellersApi(request, env, url) {
@@ -243,8 +344,23 @@ async function leaderSellersApi(request, env, url) {
     const sellers = await getTeamRows(env, leader);
     if (!sellers) return jsonResponse({ error: "Não foi possível carregar sua equipe." }, 503);
     const onboarding = await getOnboardingMap(env, sellers);
-    const executives = [...new Set(sellers.map(item => item.executive_user_id).filter(Boolean))];
-    const supervisors = [...new Set(sellers.map(item => item.supervisor_user_id).filter(Boolean))];
+    const leaderProfile = leader.role === "SUPERVISOR" ? await getLeaderProfile(env, leader.user.id) : null;
+    const roleMap = await getSellerRoles(env, [
+      ...sellers.map(item => item.seller_user_id),
+      ...sellers.map(item => item.executive_user_id),
+      ...sellers.map(item => item.supervisor_user_id),
+      leaderProfile?.executive_user_id, leader.user.id
+    ]);
+    if (!roleMap) return jsonResponse({ error: "Não foi possível confirmar os perfis da equipe." }, 503);
+    const executiveProfiles = sellers.filter(item => item.active && roleMap[item.seller_user_id] === "EXECUTIVO");
+    if (leaderProfile?.executive_user_id && !executiveProfiles.some(item => item.seller_user_id === leaderProfile.executive_user_id)) {
+      const parentExecutive = await getLeaderProfile(env, leaderProfile.executive_user_id);
+      if (parentExecutive?.active && roleMap[parentExecutive.seller_user_id] === "EXECUTIVO") executiveProfiles.push(parentExecutive);
+    }
+    const executives = [...new Set(executiveProfiles.map(item => item.seller_user_id).filter(Boolean))];
+    const supervisors = [...new Set(sellers
+      .filter(item => item.active && roleMap[item.seller_user_id] === "SUPERVISOR")
+      .map(item => item.seller_user_id).filter(Boolean))];
     const [executiveLabels, supervisorLabels] = await Promise.all([
       Promise.all(executives.map(async id => [id, await getAdminUserLabel(env, id)])),
       Promise.all(supervisors.map(async id => [id, await getAdminUserLabel(env, id)]))
@@ -252,10 +368,12 @@ async function leaderSellersApi(request, env, url) {
     return jsonResponse({
       role: leader.role,
       readiness,
+      currentExecutiveUserId: leader.role === "EXECUTIVO" ? leader.user.id : leaderProfile?.executive_user_id || null,
       assignableExecutives: executiveLabels.filter(([, label]) => label).map(([id, label]) => ({ id, label })),
       assignableSupervisors: supervisorLabels.filter(([, label]) => label).map(([id, label]) => ({ id, label })),
       sellers: sellers.map(seller => ({
         ...seller,
+        role: seller.seller_user_id ? roleMap[seller.seller_user_id] || "SEM PERFIL" : "VENDEDOR",
         onboarding: onboarding.get(seller.id) || null
       }))
     });
@@ -274,42 +392,77 @@ async function leaderSellersApi(request, env, url) {
     const id = String(body.sellerId || "");
     const name = String(body.name || "").trim();
     const email = String(body.email || "").trim().toLowerCase();
+    const memberRole = String(body.memberRole || "VENDEDOR").toUpperCase();
     const digits = phoneDigits(body.phone);
     const region = String(body.region || "Santos").trim();
     const qrPng = qrBase64(body.qrPng);
     if (!SELLER_ID_RE.test(id) || name.length < 2 || name.length > 120
       || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 254
-      || ![10, 11].includes(digits.length) || region.length < 2 || region.length > 80 || !qrPng) {
+      || ![10, 11].includes(digits.length) || region.length < 2 || region.length > 80 || !qrPng
+      || !["VENDEDOR", "SUPERVISOR", "EXECUTIVO"].includes(memberRole)) {
       return jsonResponse({ error: "Confira nome, e-mail, telefone e região do vendedor." }, 400);
+    }
+    if ((memberRole === "EXECUTIVO" && leader.role !== "GERENTE")
+      || (memberRole === "SUPERVISOR" && leader.role === "SUPERVISOR")) {
+      return jsonResponse({ error: "Seu perfil não pode cadastrar este nível da equipe." }, 403);
     }
 
     let executiveUserId = null;
     let supervisorUserId = null;
     const team = await getTeamRows(env, leader);
     if (!team) return jsonResponse({ error: "Não foi possível validar os limites da equipe." }, 503);
-    if (leader.role === "GERENTE") {
-      executiveUserId = body.executiveUserId || null;
-      supervisorUserId = body.supervisorUserId || null;
-      if (executiveUserId && !SELLER_ID_RE.test(executiveUserId)) return jsonResponse({ error: "Executivo inválido." }, 400);
-      if (supervisorUserId && !SELLER_ID_RE.test(supervisorUserId)) return jsonResponse({ error: "Supervisor inválido." }, 400);
-    } else if (leader.role === "EXECUTIVO") {
-      executiveUserId = leader.user.id;
-      supervisorUserId = body.supervisorUserId || null;
-      if (supervisorUserId && !team.some(item => item.supervisor_user_id === supervisorUserId)) return jsonResponse({ error: "Esse supervisor não pertence à sua equipe." }, 403);
-    } else {
-      supervisorUserId = leader.user.id;
-      executiveUserId = body.executiveUserId || [...new Set(team.map(item => item.executive_user_id).filter(Boolean))][0] || null;
-      if (executiveUserId && !team.some(item => item.executive_user_id === executiveUserId)) return jsonResponse({ error: "Esse executivo não pertence à sua equipe." }, 403);
+    const ownLeaderProfile = leader.role === "SUPERVISOR" ? await getLeaderProfile(env, leader.user.id) : null;
+    const teamRoleMap = await getSellerRoles(env, [
+      ...team.map(item => item.seller_user_id), ...team.map(item => item.executive_user_id),
+      ...team.map(item => item.supervisor_user_id), leader.user.id, ownLeaderProfile?.executive_user_id
+    ]);
+    if (!teamRoleMap) return jsonResponse({ error: "Não foi possível confirmar os perfis da equipe." }, 503);
+    const selectedExecutive = String(body.executiveUserId || "") || null;
+    const selectedSupervisor = String(body.supervisorUserId || "") || null;
+    if (memberRole === "SUPERVISOR") {
+      if (leader.role === "EXECUTIVO") executiveUserId = leader.user.id;
+      else executiveUserId = selectedExecutive;
+    } else if (memberRole === "VENDEDOR") {
+      if (leader.role === "SUPERVISOR") {
+        if (!ownLeaderProfile?.active) return jsonResponse({ error: "O supervisor precisa estar ativo e vinculado a um executivo antes de cadastrar vendedores." }, 409);
+        supervisorUserId = leader.user.id;
+        executiveUserId = ownLeaderProfile.executive_user_id || null;
+      } else if (leader.role === "EXECUTIVO") {
+        executiveUserId = leader.user.id;
+        supervisorUserId = selectedSupervisor;
+      } else {
+        executiveUserId = selectedExecutive;
+        supervisorUserId = selectedSupervisor;
+      }
     }
 
-    const roleIds = [executiveUserId, supervisorUserId].filter(Boolean);
-    const roleMap = await getSellerRoles(env, roleIds);
-    if ((executiveUserId && roleMap[executiveUserId] !== "EXECUTIVO")
-      || (supervisorUserId && roleMap[supervisorUserId] !== "SUPERVISOR")) {
+    if (executiveUserId && !SELLER_ID_RE.test(executiveUserId)) return jsonResponse({ error: "Executivo inválido." }, 400);
+    if (supervisorUserId && !SELLER_ID_RE.test(supervisorUserId)) return jsonResponse({ error: "Supervisor inválido." }, 400);
+    const supervisorProfile = supervisorUserId ? team.find(item =>
+      item.seller_user_id === supervisorUserId && teamRoleMap[supervisorUserId] === "SUPERVISOR" && item.active
+    ) || (supervisorUserId === leader.user.id && ownLeaderProfile?.active ? ownLeaderProfile : null) : null;
+    if (supervisorUserId && !supervisorProfile) {
+      return jsonResponse({ error: "O supervisor selecionado não está ativo dentro da sua equipe." }, 403);
+    }
+    if (supervisorProfile) {
+      if (executiveUserId && supervisorProfile.executive_user_id !== executiveUserId) {
+        return jsonResponse({ error: "O supervisor selecionado pertence a outro executivo." }, 403);
+      }
+      executiveUserId = supervisorProfile.executive_user_id || executiveUserId;
+    }
+    if (executiveUserId && teamRoleMap[executiveUserId] !== "EXECUTIVO"
+      && !(leader.role === "EXECUTIVO" && executiveUserId === leader.user.id)) {
       return jsonResponse({ error: "A atribuição precisa apontar para contas já cadastradas no perfil correspondente." }, 400);
     }
+    if (executiveUserId && leader.role === "GERENTE" &&
+        !team.some(item => item.seller_user_id === executiveUserId && item.active)) {
+      return jsonResponse({ error: "O executivo selecionado precisa estar ativo." }, 400);
+    }
+    if (supervisorUserId && teamRoleMap[supervisorUserId] !== "SUPERVISOR") {
+      return jsonResponse({ error: "A atribuição precisa apontar para uma conta já cadastrada como supervisor." }, 400);
+    }
 
-    const invite = await createSellerAuthLink(env, email, name);
+    const invite = await createSellerAuthLink(env, email, name, memberRole);
     const inviteUrl = invite.inviteUrl;
     const userId = invite.userId;
 
@@ -333,7 +486,7 @@ async function leaderSellersApi(request, env, url) {
 
     const roleInsert = await serviceRequest(env, "/rest/v1/user_roles", {
       method: "POST", headers: { "content-type": "application/json", Prefer: "return=minimal" },
-      body: JSON.stringify({ user_id: userId, role: "VENDEDOR" })
+      body: JSON.stringify({ user_id: userId, role: memberRole })
     });
     const onboardingInsert = roleInsert.ok ? await serviceRequest(env, "/rest/v1/seller_onboarding", {
       method: "POST", headers: { "content-type": "application/json", Prefer: "return=minimal" },
@@ -356,15 +509,25 @@ async function leaderSellersApi(request, env, url) {
     const targetResult = await serviceRequest(env, "/rest/v1/sellers?id=eq." + id + "&select=id,slug,name,phone,active,seller_user_id,supervisor_user_id,executive_user_id");
     const target = targetResult.data?.[0];
     if (!target) return jsonResponse({ error: "Vendedor não encontrado." }, 404);
+    const targetRoles = await getSellerRoles(env, [target.seller_user_id]);
+    if (!targetRoles) return jsonResponse({ error: "Não foi possível confirmar o perfil deste integrante." }, 503);
+    const targetRole = target.seller_user_id ? targetRoles[target.seller_user_id] : "";
+    if (!targetRole || !["GERENTE", "EXECUTIVO", "SUPERVISOR", "VENDEDOR"].includes(targetRole)) {
+      return jsonResponse({ error: "O perfil deste integrante não está configurado corretamente." }, 409);
+    }
     const inScope = leader.role === "GERENTE"
       || (leader.role === "EXECUTIVO" && target.executive_user_id === leader.user.id)
-      || (leader.role === "SUPERVISOR" && target.supervisor_user_id === leader.user.id);
+      || (leader.role === "SUPERVISOR" && target.supervisor_user_id === leader.user.id && targetRole === "VENDEDOR");
     if (!inScope) return jsonResponse({ error: "Esse vendedor não pertence à sua equipe." }, 403);
 
     if (request.method === "PATCH") {
       let body;
       try { body = await request.json(); } catch { return jsonResponse({ error: "Ação inválida." }, 400); }
+      if (body.transfer && typeof body.transfer === "object") {
+        return transferTeamMember(env, leader, target, targetRole, body.transfer);
+      }
       if (typeof body.active !== "boolean") return jsonResponse({ error: "Informe o novo estado do vendedor." }, 400);
+      if (targetRole !== "VENDEDOR") return jsonResponse({ error: "O desligamento de perfis de liderança ainda não está habilitado." }, 409);
       if (body.active) {
         const onboarding = await serviceRequest(env, "/rest/v1/seller_onboarding?seller_id=eq." + id + "&select=email_status,whatsapp_status");
         const state = onboarding.data?.[0];
@@ -658,6 +821,33 @@ body{
   background:#fff
 }
 
+.team-actions,.transfer-controls{
+  display:flex;
+  align-items:center;
+  gap:7px;
+  flex-wrap:wrap
+}
+
+.transfer-controls select{
+  min-height:42px;
+  max-width:240px;
+  padding:8px 10px;
+  border:1px solid #cfd2d8;
+  border-radius:9px;
+  background:#fff
+}
+
+.move-team-option{
+  display:inline-flex;
+  align-items:center;
+  gap:6px;
+  color:#444;
+  font-size:13px;
+  white-space:nowrap
+}
+
+.move-team-option input{accent-color:#d50000}
+
 .table-wrap{
   overflow:auto;
   margin-top:14px
@@ -911,11 +1101,16 @@ th{
   </section>
 
   <section id="sellerManagementPanel" class="card hidden" style="margin-top:18px">
-    <h2 class="h">Equipe de vendedores</h2>
+    <h2 class="h">Equipe</h2>
     <p class="muted">O convite e o QR Code são enviados automaticamente por e-mail. O botão do WhatsApp abre uma mensagem pronta para envio manual, sem cobrança da Meta.</p>
     <p id="sellerSetupStatus" class="muted" role="status" aria-live="polite"></p>
     <form id="sellerForm" class="filters" style="grid-template-columns:repeat(auto-fit,minmax(190px,1fr));margin:14px 0">
-      <input id="sellerName" placeholder="Nome do vendedor" required maxlength="120">
+      <select id="sellerRole" aria-label="Perfil da equipe">
+        <option value="VENDEDOR">Vendedor</option>
+        <option value="SUPERVISOR">Supervisor</option>
+        <option value="EXECUTIVO">Executivo / Coordenador</option>
+      </select>
+      <input id="sellerName" placeholder="Nome completo" required maxlength="120">
       <input id="sellerEmail" type="email" placeholder="E-mail" required maxlength="254">
       <input id="sellerPhone" type="tel" placeholder="WhatsApp com DDD (obrigatório)" aria-label="WhatsApp com DDD (obrigatório)" required>
       <input id="sellerRegion" placeholder="Região" value="Santos" required maxlength="80">
@@ -926,7 +1121,7 @@ th{
     <div id="sellerManagementStatus" class="muted" role="status" aria-live="polite"></div>
     <div style="overflow:auto;margin-top:12px">
       <table style="width:100%;border-collapse:collapse">
-        <thead><tr><th>Vendedor</th><th>Região</th><th>Estado</th><th>Envios</th><th>Ação</th></tr></thead>
+        <thead><tr><th>Integrante</th><th>Perfil</th><th>Região</th><th>Estado</th><th>Envios</th><th>Ação</th></tr></thead>
         <tbody id="sellerManagementRows"></tbody>
       </table>
     </div>
@@ -1761,10 +1956,8 @@ async function showApp() {
 
   await loadLeads();
 
-  if (isManager) {
-    await loadManagerQrSellers();
-  }
   if (leaderRole) await loadSellerManagement();
+  if (isManager) await loadManagerQrSellers();
 
   $("login").classList.add("hidden");
   $("app").classList.remove("hidden");
@@ -1800,15 +1993,20 @@ async function loadSellerManagement() {
       ? "E-mail automático pronto. O WhatsApp será enviado manualmente, sem custo da Meta."
       : "Envio automático de e-mail ainda não configurado. Novos cadastros ficam indisponíveis até configurá-lo.";
     $("sellerCreateBtn").disabled = !payload.readiness?.ready;
+    const roleSelect = $("sellerRole");
+    const roleOptions = payload.role === "GERENTE"
+      ? [["VENDEDOR", "Vendedor"], ["SUPERVISOR", "Supervisor"], ["EXECUTIVO", "Executivo / Coordenador"]]
+      : payload.role === "EXECUTIVO"
+        ? [["VENDEDOR", "Vendedor"], ["SUPERVISOR", "Supervisor"]]
+        : [["VENDEDOR", "Vendedor"]];
+    roleSelect.replaceChildren(...roleOptions.map(([value, label]) => new Option(label, value)));
     const execSelect = $("sellerExecutive");
     const supSelect = $("sellerSupervisor");
-    execSelect.classList.toggle("hidden", payload.role !== "GERENTE" && payload.role !== "SUPERVISOR");
-    supSelect.classList.toggle("hidden", payload.role === "SUPERVISOR");
-    for (const [select, choices, label] of [[execSelect, payload.assignableExecutives, "Selecione o executivo"], [supSelect, payload.assignableSupervisors, "Selecione o supervisor"]]) {
+    for (const [select, choices, label] of [[execSelect, payload.assignableExecutives, "Sem executivo vinculado"], [supSelect, payload.assignableSupervisors, "Sem supervisor vinculado"]]) {
       select.replaceChildren(new Option(label, ""));
       (choices || []).forEach(choice => select.add(new Option(choice.label, choice.id)));
-      if (!choices?.length) select.classList.add("hidden");
     }
+    updateSellerAssignmentFields();
     rows.replaceChildren();
     (payload.sellers || []).forEach(seller => {
       const tr = document.createElement("tr");
@@ -1819,14 +2017,18 @@ async function loadSellerManagement() {
         ? "E-mail: " + emailLabel + " · WhatsApp: " + (emailStatus === "sent" ? "manual (sem custo)" : "após confirmar o e-mail")
         : "Sem controle de envio";
       const name = document.createElement("td"); name.textContent = seller.name;
+      const role = document.createElement("td"); role.textContent = seller.role === "EXECUTIVO" ? "Executivo / Coordenador" : seller.role === "SUPERVISOR" ? "Supervisor" : "Vendedor";
       const region = document.createElement("td"); region.textContent = seller.region || "—";
       const active = document.createElement("td"); active.textContent = state;
       const sends = document.createElement("td"); sends.textContent = delivery;
       const actionCell = document.createElement("td");
-      const action = document.createElement("button"); action.type = "button"; action.className = "btn secondary";
-      action.textContent = seller.active ? "Desligar" : "Reativar";
-      action.addEventListener("click", () => setSellerActive(seller, !seller.active));
-      actionCell.append(action);
+      actionCell.className = "team-actions";
+      if (seller.role === "VENDEDOR") {
+        const action = document.createElement("button"); action.type = "button"; action.className = "btn secondary";
+        action.textContent = seller.active ? "Desligar" : "Reativar";
+        action.addEventListener("click", () => setSellerActive(seller, !seller.active));
+        actionCell.append(action);
+      }
       if (seller.onboarding && seller.onboarding.email_status !== "sent") {
         const retry = document.createElement("button"); retry.type = "button"; retry.className = "btn secondary"; retry.style.marginLeft = "6px"; retry.textContent = "Reenviar e-mail";
         retry.addEventListener("click", () => retrySellerDelivery(seller)); actionCell.append(retry);
@@ -1837,10 +2039,97 @@ async function loadSellerManagement() {
         whatsapp.textContent = "Abrir WhatsApp"; whatsapp.href = buildWhatsappInviteUrl(seller.phone, seller.name, qrUrl.href);
         whatsapp.target = "_blank"; whatsapp.rel = "noopener noreferrer"; actionCell.append(whatsapp);
       }
-      tr.append(name, region, active, sends, actionCell); rows.append(tr);
+      if (seller.role === "SUPERVISOR" && payload.role === "GERENTE" || seller.role === "VENDEDOR") {
+        appendTransferControls(actionCell, seller, payload);
+      }
+      tr.append(name, role, region, active, sends, actionCell); rows.append(tr);
     });
   } catch (error) {
     status.textContent = error.message;
+  }
+}
+
+function updateSellerAssignmentFields() {
+  if (!sellerTeamData) return;
+  const role = $("sellerRole").value;
+  const showExecutive = sellerTeamData.role === "GERENTE" && role !== "EXECUTIVO";
+  const showSupervisor = role === "VENDEDOR" && sellerTeamData.role !== "SUPERVISOR";
+  $("sellerExecutive").classList.toggle("hidden", !showExecutive || !sellerTeamData.assignableExecutives?.length);
+  $("sellerSupervisor").classList.toggle("hidden", !showSupervisor || !sellerTeamData.assignableSupervisors?.length);
+  $("sellerExecutive").required = showExecutive && sellerTeamData.assignableExecutives?.length > 0 && role === "SUPERVISOR";
+}
+
+$("sellerRole").addEventListener("change", updateSellerAssignmentFields);
+
+function appendTransferControls(actionCell, seller, payload) {
+  const group = document.createElement("span"); group.className = "transfer-controls";
+  const select = document.createElement("select"); select.setAttribute("aria-label", "Transferir " + seller.name + " para");
+  const add = (label, value, selected = false) => {
+    const option = new Option(label, value); option.selected = selected; select.add(option);
+  };
+  add("Transferir para…", "");
+  if (seller.role === "SUPERVISOR") {
+    add("Sem executivo", "manager");
+    (payload.assignableExecutives || []).forEach(item => add("Executivo: " + item.label, "executive:" + item.id));
+  } else if (payload.role === "GERENTE") {
+    add("Carteira do gerente", "manager");
+    (payload.assignableExecutives || []).forEach(item => add("Executivo: " + item.label, "executive:" + item.id));
+    (payload.assignableSupervisors || []).forEach(item => add("Supervisor: " + item.label, "supervisor:" + item.id));
+  } else if (payload.role === "EXECUTIVO") {
+    add("Direto nesta equipe", "executive:" + payload.currentExecutiveUserId);
+    (payload.assignableSupervisors || []).forEach(item => add("Supervisor: " + item.label, "supervisor:" + item.id));
+  } else if (payload.role === "SUPERVISOR" && payload.currentExecutiveUserId) {
+    add("Carteira do executivo", "executive:" + payload.currentExecutiveUserId);
+  }
+  const moveTeam = document.createElement("input");
+  moveTeam.type = "checkbox"; moveTeam.checked = true;
+  const moveTeamLabel = document.createElement("label");
+  moveTeamLabel.className = "move-team-option";
+  moveTeamLabel.append(moveTeam, document.createTextNode("Levar vendedores da equipe"));
+  if (seller.role === "SUPERVISOR") group.append(select, moveTeamLabel);
+  else group.append(select);
+  const transfer = document.createElement("button"); transfer.type = "button"; transfer.className = "btn secondary";
+  transfer.textContent = "Transferir";
+  transfer.addEventListener("click", () => submitSellerTransfer(seller, select, moveTeam));
+  group.append(transfer);
+  actionCell.append(group);
+}
+
+async function submitSellerTransfer(seller, select, moveTeam) {
+  const selected = select.value;
+  if (!selected) {
+    $("sellerManagementStatus").textContent = "Selecione o destino da transferência.";
+    return;
+  }
+  let transfer = { executiveUserId: null, supervisorUserId: null, moveTeam: moveTeam.checked };
+  if (selected.startsWith("executive:")) transfer.executiveUserId = selected.slice("executive:".length) || null;
+  else if (selected.startsWith("supervisor:")) transfer.supervisorUserId = selected.slice("supervisor:".length);
+  else if (selected !== "manager") return;
+
+  const message = seller.role === "SUPERVISOR"
+    ? moveTeam.checked
+      ? "O supervisor e seus vendedores serão transferidos para o executivo escolhido. Os leads continuarão nas carteiras dos mesmos vendedores. Continuar?"
+      : "O supervisor será transferido sem levar os vendedores. Eles permanecerão com o executivo atual e deixarão de pertencer a este supervisor. Continuar?"
+    : "A transferência muda quais supervisores e executivos podem acessar os leads de " + seller.name + ". Os leads permanecem na carteira do vendedor. Continuar?";
+  if (!window.confirm(message)) return;
+
+  const status = $("sellerManagementStatus"); status.textContent = "Transferindo…";
+  const button = select.parentElement.querySelector("button"); button.disabled = true;
+  try {
+    const headers = await sellerApiHeaders();
+    const response = await fetch("/api/sellers/" + encodeURIComponent(seller.id), {
+      method: "PATCH", headers, body: JSON.stringify({ transfer })
+    });
+    const result = await response.json(); if (!response.ok) throw new Error(result.error || "Não foi possível transferir.");
+    status.textContent = seller.role === "SUPERVISOR" && !transfer.moveTeam
+      ? "Supervisor transferido. Os vendedores permaneceram com o executivo anterior."
+      : "Transferência concluída. Os leads continuam nas carteiras dos mesmos vendedores.";
+    await loadLeads();
+    await loadSellerManagement();
+    if (isManager) await loadManagerQrSellers();
+  } catch (error) {
+    status.textContent = error.message;
+    button.disabled = false;
   }
 }
 
@@ -1895,7 +2184,7 @@ async function createSeller(event) {
 
     const headers = await sellerApiHeaders();
     const response = await fetch("/api/sellers", { method: "POST", headers, body: JSON.stringify({
-      sellerId: id, name: $("sellerName").value.trim(), email: $("sellerEmail").value.trim(),
+      sellerId: id, memberRole: $("sellerRole").value, name: $("sellerName").value.trim(), email: $("sellerEmail").value.trim(),
       phone: $("sellerPhone").value.trim(), region: $("sellerRegion").value.trim(),
       executiveUserId: $("sellerExecutive").value || null, supervisorUserId: $("sellerSupervisor").value || null,
       qrPng
@@ -1928,19 +2217,14 @@ let qrSellers = [];
 
 async function loadManagerQrSellers() {
   $("qrStatus").textContent = "Carregando vendedores ativos…";
-  const { data, error } = await client
-    .from("sellers")
-    .select("id,slug,name,active")
-    .eq("active", true)
-    .order("name");
-
-  if (error) {
+  if (!sellerTeamData?.sellers) {
     $("qrStatus").textContent = "Não foi possível carregar os vendedores para gerar os QR Codes.";
-    console.error(error);
     return;
   }
 
-  qrSellers = data || [];
+  qrSellers = sellerTeamData.sellers
+    .filter(item => item.active && item.role === "VENDEDOR")
+    .map(({ id, slug, name, active }) => ({ id, slug, name, active }));
   $("qrStatus").textContent = qrSellers.length
     ? qrSellers.length + " vendedor(es) ativo(s). Os links não mudam se o nome do vendedor for atualizado."
     : "Nenhum vendedor ativo encontrado.";
