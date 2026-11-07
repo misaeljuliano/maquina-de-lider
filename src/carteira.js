@@ -109,7 +109,14 @@ async function sendSellerEmail(env, email, name, qrUrl, qrPng, inviteUrl, slug) 
       attachments: [{ filename: "qr-" + slug + ".png", content: png }]
     })
   });
-  return { ok: response.ok, status: response.status };
+  let errorMessage = "";
+  if (!response.ok) {
+    try {
+      const payload = await response.json();
+      errorMessage = String(payload?.message || payload?.name || "");
+    } catch { /* Keep provider errors optional and never log credentials. */ }
+  }
+  return { ok: response.ok, status: response.status, errorMessage };
 }
 
 async function createInviteLink(env, email, name) {
@@ -385,13 +392,17 @@ async function deliverSellerOnboarding(env, seller) {
     catch { emailResult = { ok: false, status: 502 }; }
   }
   const nextEmail = emailResult.ok ? "sent" : "failed";
+  const providerDetail = String(emailResult.errorMessage || "")
+    .replace(/[\r\n]+/g, " ")
+    .replace(/re_[A-Za-z0-9_-]{10,}/g, "[redigido]")
+    .slice(0, 180);
   // WhatsApp stays manual so seller onboarding cannot trigger Meta message charges.
   const nextWhatsapp = seller.onboarding?.whatsapp_status || "pending";
   await serviceRequest(env, "/rest/v1/seller_onboarding?seller_id=eq." + seller.id, {
     method: "PATCH", headers: { "content-type": "application/json", Prefer: "return=minimal" },
     body: JSON.stringify({
       email_status: nextEmail, whatsapp_status: nextWhatsapp,
-      email_error: emailResult.ok ? null : "Falha no provedor de e-mail (HTTP " + emailResult.status + ")",
+      email_error: emailResult.ok ? null : "Falha no provedor de e-mail (HTTP " + emailResult.status + ")" + (providerDetail ? ": " + providerDetail : ""),
       whatsapp_error: null,
       attempt_count: (seller.onboarding?.attempt_count || 0) + 1,
       updated_at: new Date().toISOString()
