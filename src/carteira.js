@@ -8,6 +8,19 @@ const QR_PRODUCTION_ORIGIN = "https://maquina-de-lider.juliano-misael.workers.de
 const LEADER_ROLES = ["GERENTE", "EXECUTIVO", "SUPERVISOR"];
 const SELLER_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
+function walletSupabaseUrl(env) {
+  if (env.WALLET_PREVIEW !== "true") return SUPABASE_URL;
+  try {
+    const configured = new URL(String(env.SUPABASE_URL || ""));
+    if (configured.protocol === "https:" && configured.hostname.endsWith(".supabase.co")) return configured.origin;
+  } catch { /* A preview without staging config must fail closed. */ }
+  return "";
+}
+
+function walletPublishableKey(env) {
+  return env.WALLET_PREVIEW === "true" ? String(env.SUPABASE_PUBLISHABLE_KEY || "") : SUPABASE_PUBLISHABLE_KEY;
+}
+
 function jsonResponse(body, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
@@ -24,7 +37,9 @@ function serviceHeaders(env, extra = {}) {
 }
 
 async function serviceRequest(env, endpoint, options = {}) {
-  const response = await fetch(SUPABASE_URL + endpoint, {
+  const baseUrl = walletSupabaseUrl(env);
+  if (!baseUrl) return { ok: false, status: 503, data: null };
+  const response = await fetch(baseUrl + endpoint, {
     ...options,
     headers: serviceHeaders(env, options.headers || {})
   });
@@ -39,11 +54,13 @@ async function serviceRequest(env, endpoint, options = {}) {
 async function requireLeader(request, env) {
   const authorization = request.headers.get("authorization") || "";
   if (!/^Bearer\s+\S+$/i.test(authorization)) return { error: jsonResponse({ error: "Sessão expirada. Entre novamente." }, 401) };
-  if (!env.SUPABASE_SERVICE_ROLE_KEY) return { error: jsonResponse({ error: "Gestão de vendedores indisponível." }, 503) };
+  const baseUrl = walletSupabaseUrl(env);
+  const publishableKey = walletPublishableKey(env);
+  if (!env.SUPABASE_SERVICE_ROLE_KEY || !baseUrl || !publishableKey) return { error: jsonResponse({ error: "Gestão de vendedores indisponível neste ambiente." }, 503) };
   let userResponse;
   try {
-    userResponse = await fetch(SUPABASE_URL + "/auth/v1/user", {
-      headers: { apikey: SUPABASE_PUBLISHABLE_KEY, Authorization: authorization }
+    userResponse = await fetch(baseUrl + "/auth/v1/user", {
+      headers: { apikey: publishableKey, Authorization: authorization }
     });
   } catch {
     return { error: jsonResponse({ error: "Não foi possível validar a sessão." }, 503) };
@@ -625,7 +642,7 @@ async function leaderSellersApi(request, env, url) {
     }
 
     return await deliverSellerOnboarding(env, {
-      id, slug: sellerSlug, name, email, phone: digits, userId, inviteUrl, qrPng, retry: false
+      id, slug: sellerSlug, name, email, phone: digits, userId, inviteUrl, qrPng, retry: false, requestOrigin: url.origin
     });
   }
 
@@ -675,7 +692,7 @@ async function leaderSellersApi(request, env, url) {
     if (invite && (!invite.ok || typeof inviteUrl !== "string")) return jsonResponse({ error: "Não foi possível recriar o convite por e-mail." }, 502);
     return await deliverSellerOnboarding(env, {
       id, slug: target.slug, name: target.name, email, phone: target.phone, userId: target.seller_user_id, active: target.active,
-      inviteUrl, qrPng, retry: true, onboarding: onboarding.data[0]
+      inviteUrl, qrPng, retry: true, onboarding: onboarding.data[0], requestOrigin: url.origin
     });
   }
 
@@ -683,7 +700,9 @@ async function leaderSellersApi(request, env, url) {
 }
 
 async function deliverSellerOnboarding(env, seller) {
-  const qrUrl = QR_PRODUCTION_ORIGIN + "/?vendedor=" + encodeURIComponent(seller.id);
+  const qrOrigin = walletPublicOrigin(env, seller.requestOrigin || "");
+  if (!qrOrigin) return jsonResponse({ error: "Origem da carteira indisponível para este ambiente." }, 503);
+  const qrUrl = qrOrigin + "/?vendedor=" + encodeURIComponent(seller.id);
   const emailStatus = seller.retry ? seller.onboarding.email_status : "pending";
   let emailResult = { ok: emailStatus === "sent", status: 200 };
   if (emailStatus !== "sent") {
@@ -752,7 +771,13 @@ function html(body) {
   });
 }
 
-function page() {
+function page(env, requestOrigin) {
+  const supabaseUrl = walletSupabaseUrl(env);
+  const publishableKey = walletPublishableKey(env);
+  const walletOrigin = walletPublicOrigin(env, requestOrigin);
+  if (!supabaseUrl || !publishableKey || !walletOrigin) {
+    return html("<!doctype html><html lang=\"pt-BR\"><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>Carteira indisponível</title><body><main style=\"font:16px Arial;margin:48px auto;max-width:620px;padding:24px\"><h1>Carteira indisponível</h1><p>Este ambiente ainda não está configurado com os serviços próprios. Tente novamente mais tarde.</p></main></body></html>");
+  }
   return html(`<!doctype html>
 <html lang="pt-BR">
 <head>
@@ -1331,8 +1356,8 @@ const {
 
 
 const client = createClient(
-  ${JSON.stringify(SUPABASE_URL)},
-  ${JSON.stringify(SUPABASE_PUBLISHABLE_KEY)}
+  ${JSON.stringify(supabaseUrl)},
+  ${JSON.stringify(publishableKey)}
 );
 
 
@@ -1341,6 +1366,7 @@ let isManager = false;
 let leaderRole = "";
 let sellerTeamData = null;
 const QR_PRODUCTION_ORIGIN = "https://maquina-de-lider.juliano-misael.workers.dev";
+const WALLET_PUBLIC_ORIGIN = ${JSON.stringify(walletOrigin)};
 
 
 const $ = id =>
@@ -1907,7 +1933,7 @@ async function loadSellerManagement() {
         retry.addEventListener("click", () => retrySellerDelivery(seller)); actionCell.append(retry);
       }
       if (seller.onboarding && seller.onboarding.email_status === "sent" && seller.phone) {
-        const qrUrl = new URL("/", QR_PRODUCTION_ORIGIN); qrUrl.searchParams.set("vendedor", seller.id);
+        const qrUrl = new URL("/", WALLET_PUBLIC_ORIGIN); qrUrl.searchParams.set("vendedor", seller.id);
         const whatsapp = document.createElement("a"); whatsapp.className = "btn secondary"; whatsapp.style.marginLeft = "6px";
         whatsapp.textContent = "Abrir WhatsApp"; whatsapp.href = buildWhatsappInviteUrl(seller.phone, seller.name, qrUrl.href);
         whatsapp.target = "_blank"; whatsapp.rel = "noopener noreferrer"; actionCell.append(whatsapp);
@@ -2095,7 +2121,7 @@ async function createSeller(event) {
   button.disabled = true; button.textContent = "Criando e enviando e-mail…"; status.textContent = "";
   try {
     const id = crypto.randomUUID();
-    const canonical = new URL("/", QR_PRODUCTION_ORIGIN); canonical.searchParams.set("vendedor", id);
+    const canonical = new URL("/", WALLET_PUBLIC_ORIGIN); canonical.searchParams.set("vendedor", id);
     const qr = qrcode(0, "M"); qr.addData(canonical.href); qr.make();
     const qrPng = await qrPngDataUrl(qr, 8, 4);
     const headers = await sellerApiHeaders();
@@ -2117,7 +2143,7 @@ async function createSeller(event) {
 async function retrySellerDelivery(seller) {
   const status = $("sellerManagementStatus"); status.textContent = "Reenviando convite por e-mail…";
   try {
-    const canonical = new URL("/", QR_PRODUCTION_ORIGIN); canonical.searchParams.set("vendedor", seller.id);
+    const canonical = new URL("/", WALLET_PUBLIC_ORIGIN); canonical.searchParams.set("vendedor", seller.id);
     const qr = qrcode(0, "M"); qr.addData(canonical.href); qr.make();
     const headers = await sellerApiHeaders();
     const response = await fetch("/api/sellers/" + encodeURIComponent(seller.id) + "/retry", { method: "POST", headers, body: JSON.stringify({ qrPng: await qrPngDataUrl(qr, 8, 4) }) });
@@ -2379,7 +2405,7 @@ export default {
       url.pathname === "/carteira/"
     ) {
 
-      return page();
+      return page(env, url.origin);
 
     }
 
