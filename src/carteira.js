@@ -118,9 +118,57 @@ async function createInviteLink(env, email, name) {
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
       type: "invite", email,
-      options: { data: { name, role: "VENDEDOR" }, redirectTo: QR_PRODUCTION_ORIGIN + "/carteira" }
+      data: { name, role: "VENDEDOR" },
+      redirect_to: QR_PRODUCTION_ORIGIN + "/carteira"
     })
   });
+}
+
+function generatedActionLink(result) {
+  return result?.data?.properties?.action_link || result?.data?.action_link;
+}
+
+function generatedUserId(result) {
+  return result?.data?.user?.id || result?.data?.user_id || result?.data?.id;
+}
+
+async function findPendingAuthUser(env, email) {
+  const result = await serviceRequest(env, "/auth/v1/admin/users?page=1&per_page=1000");
+  const users = Array.isArray(result.data?.users) ? result.data.users : Array.isArray(result.data) ? result.data : [];
+  if (!result.ok) return null;
+  const user = users.find(item => String(item.email || "").toLowerCase() === email.toLowerCase());
+  if (!user || user.confirmed_at || !user.invited_at || !SELLER_ID_RE.test(user.id || "")) return null;
+  return user;
+}
+
+async function createRecoveryLink(env, email) {
+  return serviceRequest(env, "/auth/v1/admin/generate_link", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      type: "recovery", email,
+      redirect_to: QR_PRODUCTION_ORIGIN + "/carteira"
+    })
+  });
+}
+
+async function createSellerAuthLink(env, email, name) {
+  const invite = await createInviteLink(env, email, name);
+  const inviteUrl = generatedActionLink(invite);
+  const userId = generatedUserId(invite);
+  if (invite.ok && SELLER_ID_RE.test(userId || "") && typeof inviteUrl === "string") {
+    return { ...invite, userId, inviteUrl };
+  }
+  if (invite.status !== 422) return { ...invite, userId, inviteUrl };
+
+  const pendingUser = await findPendingAuthUser(env, email);
+  if (!pendingUser) return { ...invite, userId, inviteUrl };
+  const recovery = await createRecoveryLink(env, email);
+  return {
+    ...recovery,
+    userId: pendingUser.id,
+    inviteUrl: generatedActionLink(recovery)
+  };
 }
 
 async function getTeamRows(env, leader) {
@@ -235,9 +283,9 @@ async function leaderSellersApi(request, env, url) {
       return jsonResponse({ error: "A atribuição precisa apontar para contas já cadastradas no perfil correspondente." }, 400);
     }
 
-    const invite = await createInviteLink(env, email, name);
-    const inviteUrl = invite.data?.properties?.action_link || invite.data?.action_link;
-    const userId = invite.data?.user?.id || invite.data?.user_id;
+    const invite = await createSellerAuthLink(env, email, name);
+    const inviteUrl = invite.inviteUrl;
+    const userId = invite.userId;
     if (!invite.ok || !SELLER_ID_RE.test(userId || "") || typeof inviteUrl !== "string") {
       return jsonResponse({ error: invite.status === 422 ? "Já existe uma conta com esse e-mail." : "Não foi possível criar o convite de acesso." }, invite.status === 422 ? 409 : 502);
     }
@@ -316,8 +364,8 @@ async function leaderSellersApi(request, env, url) {
     const authUser = await serviceRequest(env, "/auth/v1/admin/users/" + target.seller_user_id);
     const email = authUser.data?.email;
     if (!email) return jsonResponse({ error: "Não foi possível localizar o e-mail de convite." }, 503);
-    const invite = onboarding.data[0].email_status === "sent" ? null : await createInviteLink(env, email, target.name);
-    const inviteUrl = invite?.data?.properties?.action_link || invite?.data?.action_link;
+    const invite = onboarding.data[0].email_status === "sent" ? null : await createSellerAuthLink(env, email, target.name);
+    const inviteUrl = invite?.inviteUrl;
     if (invite && (!invite.ok || typeof inviteUrl !== "string")) return jsonResponse({ error: "Não foi possível recriar o convite por e-mail." }, 502);
     return await deliverSellerOnboarding(env, {
       id, slug: target.slug, name: target.name, email, phone: target.phone, userId: target.seller_user_id, active: target.active,
