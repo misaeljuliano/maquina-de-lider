@@ -112,7 +112,6 @@ function slugify(value) {
 }
 
 async function sendSellerEmail(env, email, name, qrUrl, qrPng, inviteUrl, slug) {
-  const png = qrPng.split(",")[1];
   const response = await fetch("https://api.resend.com/emails", {
     method: "POST",
     headers: { Authorization: "Bearer " + env.RESEND_API_KEY, "content-type": "application/json" },
@@ -122,19 +121,20 @@ async function sendSellerEmail(env, email, name, qrUrl, qrPng, inviteUrl, slug) 
       subject: "Seu acesso e QR Code da Máquina de Líder",
       text: "Olá " + name + ". Acesse sua carteira pelo convite e use o QR Code em anexo. Link do QR: " + qrUrl + "\nAtive seu acesso: " + inviteUrl,
       html: "<p>Olá " + safeHtml(name) + ".</p><p>Seu acesso à Minha Carteira está pronto. Abra o convite para definir sua senha.</p><p><a href=\"" + safeHtml(inviteUrl) + "\">Ativar meu acesso</a></p><p>Este é seu QR Code oficial. O link permanente é <a href=\"" + safeHtml(qrUrl) + "\">" + safeHtml(qrUrl) + "</a>.</p><p>O arquivo PNG do QR Code está anexado.</p>",
-      attachments: [{ filename: "qr-" + slug + ".png", content: png }]
+      attachments: [{ filename: "qr-" + slug + ".png", content: qrPng }]
     })
   });
   return { ok: response.ok, status: response.status };
 }
 
 async function createInviteLink(env, email, name) {
-  return serviceRequest(env, "/auth/v1/admin/generate_link", {
+  const redirect = encodeURIComponent(env.WALLET_PUBLIC_ORIGIN + "/carteira");
+  return serviceRequest(env, "/auth/v1/admin/generate_link?redirect_to=" + redirect, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
       type: "invite", email,
-      options: { data: { name, role: "VENDEDOR" }, redirectTo: QR_PRODUCTION_ORIGIN + "/carteira" }
+      data: { name, role: "VENDEDOR" }
     })
   });
 }
@@ -253,7 +253,7 @@ async function leaderSellersApi(request, env, url) {
 
     const invite = await createInviteLink(env, email, name);
     const inviteUrl = invite.data?.properties?.action_link || invite.data?.action_link;
-    const userId = invite.data?.user?.id || invite.data?.user_id;
+    const userId = invite.data?.user?.id || invite.data?.user_id || invite.data?.id;
     if (!invite.ok || !SELLER_ID_RE.test(userId || "") || typeof inviteUrl !== "string") {
       return jsonResponse({ error: invite.status === 422 ? "Já existe uma conta com esse e-mail." : "Não foi possível criar o convite de acesso." }, invite.status === 422 ? 409 : 502);
     }
@@ -345,7 +345,7 @@ async function leaderSellersApi(request, env, url) {
 }
 
 async function deliverSellerOnboarding(env, seller) {
-  const qrUrl = QR_PRODUCTION_ORIGIN + "/?vendedor=" + encodeURIComponent(seller.id);
+  const qrUrl = env.WALLET_PUBLIC_ORIGIN + "/?vendedor=" + encodeURIComponent(seller.id);
   const emailStatus = seller.retry ? seller.onboarding.email_status : "pending";
   let emailResult = { ok: emailStatus === "sent", status: 200 };
   if (emailStatus !== "sent") {
@@ -400,7 +400,7 @@ function html(body) {
   });
 }
 
-function page(config) {
+function page(config, publicOrigin) {
   return html(`<!doctype html>
 <html lang="pt-BR">
 <head>
@@ -984,7 +984,7 @@ let isManager = false;
 let editingObservation = null;
 let leaderRole = "";
 let sellerTeamData = null;
-const QR_PRODUCTION_ORIGIN = "https://maquina-de-lider.juliano-misael.workers.dev";
+const QR_PRODUCTION_ORIGIN = ${JSON.stringify(publicOrigin)};
 
 
 const $ = id =>
@@ -1640,6 +1640,29 @@ async function setSellerActive(seller, active) {
   } catch (error) { status.textContent = error.message; }
 }
 
+function sellerQrPng(url) {
+  const qr = qrcode(0, "M");
+  qr.addData(url);
+  qr.make();
+  const canvas = document.createElement("canvas");
+  const modules = qr.getModuleCount();
+  const cell = 8;
+  const quietZone = 4;
+  canvas.width = canvas.height = (modules + quietZone * 2) * cell;
+  const context = canvas.getContext("2d");
+  context.fillStyle = "#fff";
+  context.fillRect(0, 0, canvas.width, canvas.height);
+  context.fillStyle = "#000";
+  for (let row = 0; row < modules; row++) {
+    for (let column = 0; column < modules; column++) {
+      if (qr.isDark(row, column)) {
+        context.fillRect((column + quietZone) * cell, (row + quietZone) * cell, cell, cell);
+      }
+    }
+  }
+  return canvas.toDataURL("image/png");
+}
+
 async function createSeller(event) {
   event.preventDefault();
   const button = $("sellerCreateBtn"); const status = $("sellerManagementStatus");
@@ -1648,8 +1671,7 @@ async function createSeller(event) {
   try {
     const id = crypto.randomUUID();
     const canonical = new URL("/", QR_PRODUCTION_ORIGIN); canonical.searchParams.set("vendedor", id);
-    const qr = qrcode(0, "M"); qr.addData(canonical.href); qr.make();
-    const qrPng = qr.createDataURL(8, 4);
+    const qrPng = sellerQrPng(canonical.href);
     const headers = await sellerApiHeaders();
     const response = await fetch("/api/sellers", { method: "POST", headers, body: JSON.stringify({
       sellerId: id, name: $("sellerName").value.trim(), email: $("sellerEmail").value.trim(),
@@ -1670,9 +1692,8 @@ async function retrySellerDelivery(seller) {
   const status = $("sellerManagementStatus"); status.textContent = "Reenviando convite por e-mail…";
   try {
     const canonical = new URL("/", QR_PRODUCTION_ORIGIN); canonical.searchParams.set("vendedor", seller.id);
-    const qr = qrcode(0, "M"); qr.addData(canonical.href); qr.make();
     const headers = await sellerApiHeaders();
-    const response = await fetch("/api/sellers/" + encodeURIComponent(seller.id) + "/retry", { method: "POST", headers, body: JSON.stringify({ qrPng: qr.createDataURL(8, 4) }) });
+    const response = await fetch("/api/sellers/" + encodeURIComponent(seller.id) + "/retry", { method: "POST", headers, body: JSON.stringify({ qrPng: sellerQrPng(canonical.href) }) });
     const result = await response.json(); if (!response.ok) throw new Error(result.error || "Não foi possível reenviar.");
     status.textContent = result.message || "Reenvio processado."; await loadSellerManagement();
   } catch (error) { status.textContent = error.message; }
@@ -1930,9 +1951,15 @@ export default {
     if (isWallet || isSellerApi) {
       const config = walletSupabaseConfig(env);
       if (!config) return jsonResponse({ error: "Configuração da carteira indisponível." }, 503);
-      if (isWallet) return page(config);
+      const publicOrigin = env.WALLET_PREVIEW === "true" ? env.WALLET_PUBLIC_ORIGIN : QR_PRODUCTION_ORIGIN;
+      if (!/^https:\/\/[a-z0-9.-]+$/i.test(publicOrigin ?? "") ||
+          (env.WALLET_PREVIEW === "true" && publicOrigin.toLowerCase() === QR_PRODUCTION_ORIGIN)) {
+        return jsonResponse({ error: "Endereço público da carteira indisponível." }, 503);
+      }
+      if (isWallet) return page(config, publicOrigin);
       return leaderSellersApi(request, {
         ...env,
+        WALLET_PUBLIC_ORIGIN: publicOrigin,
         SUPABASE_URL: config.url,
         SUPABASE_PUBLISHABLE_KEY: config.key
       }, url);

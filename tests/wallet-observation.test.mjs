@@ -5,9 +5,50 @@ import worker from "../src/carteira.js";
 
 const preview = {
   WALLET_PREVIEW: "true",
+  WALLET_PUBLIC_ORIGIN: "https://wallet-staging.example.test",
   SUPABASE_URL: "https://staging.supabase.co",
   SUPABASE_PUBLISHABLE_KEY: "sb_publishable_staging"
 };
+
+test("preview seller onboarding sends a staging invitation and the matching QR attachment", async t => {
+  const id = "70000000-0000-4000-8000-000000000001";
+  const qr = "iVBORw0KGgo=";
+  const invite = "https://staging.supabase.co/auth/v1/verify?type=invite";
+  let email;
+  t.mock.method(globalThis, "fetch", async (input, init) => {
+    const url = new URL(input);
+    if (url.hostname === "api.resend.com") {
+      email = JSON.parse(init.body);
+      return Response.json({ id: "email-test" });
+    }
+    assert.equal(url.hostname, "staging.supabase.co");
+    if (url.pathname === "/auth/v1/user") return Response.json({ id });
+    if (url.pathname === "/auth/v1/admin/generate_link") {
+      assert.equal(url.searchParams.get("redirect_to"), preview.WALLET_PUBLIC_ORIGIN + "/carteira");
+      assert.equal(JSON.parse(init.body).data.role, "VENDEDOR");
+      return Response.json({ id, action_link: invite });
+    }
+    if (url.pathname === "/rest/v1/user_roles" && !init.method) {
+      return Response.json([{ role: "GERENTE" }]);
+    }
+    return Response.json([]);
+  });
+  const response = await worker.fetch(new Request("https://wallet-staging.example.test/api/sellers", {
+    method: "POST",
+    headers: { authorization: "Bearer test-token" },
+    body: JSON.stringify({
+      sellerId: id, name: "Vendedor Teste", email: "seller@example.test",
+      phone: "11900000000", region: "Teste", qrPng: "data:image/png;base64," + qr
+    })
+  }), {
+    ...preview, SUPABASE_SERVICE_ROLE_KEY: "test-secret",
+    RESEND_API_KEY: "test-email-secret", EMAIL_FROM: "test@example.test"
+  });
+  assert.equal((await response.json()).emailStatus, "sent");
+  assert.ok(email.text.includes(invite));
+  assert.ok(email.text.includes(preview.WALLET_PUBLIC_ORIGIN + "/?vendedor=" + id));
+  assert.equal(email.attachments[0].content, qr);
+});
 
 test("wallet preview embeds only its configured public Supabase credentials", async () => {
   const request = new Request("https://example.test/carteira");
@@ -18,6 +59,7 @@ test("wallet preview embeds only its configured public Supabase credentials", as
   assert.match(production, /xmipdjjdtruutcumhrzb\.supabase\.co/);
   assert.match(html, /https:\/\/staging\.supabase\.co/);
   assert.match(html, /sb_publishable_staging/);
+  assert.match(html, /https:\/\/wallet-staging\.example\.test/);
   assert.doesNotMatch(html, /xmipdjjdtruutcumhrzb|test-service-secret/);
 });
 
@@ -27,6 +69,7 @@ test("incomplete preview config blocks the wallet and seller API without contact
     { WALLET_PREVIEW: "true" },
     { ...preview, SUPABASE_PUBLISHABLE_KEY: undefined },
     { ...preview, SUPABASE_URL: undefined },
+    { ...preview, WALLET_PUBLIC_ORIGIN: undefined },
     { ...preview, SUPABASE_URL: "https://xmipdjjdtruutcumhrzb.supabase.co" }
   ]) {
     for (const path of ["/carteira", "/api/sellers"]) {

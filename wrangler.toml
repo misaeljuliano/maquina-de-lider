@@ -1,4 +1,4 @@
 name = "maquina-de-lider"
 main = "src/carteira.js"
 compatibility_date = "2026-11-01"
-previews = { vars = { WALLET_PREVIEW = "true", SUPABASE_URL = "https://hmlinyowvggqpqgzbuhw.supabase.co", SUPABASE_PUBLISHABLE_KEY = "sb_publishable_1TmnsUmG5aw_qCf-QDstzg_U4KsudR5" } }
+previews = { vars = { WALLET_PREVIEW = "true", WALLET_PUBLIC_ORIGIN = "https://feat-gerente-lead-observation-maquina-de-lider.juliano-misael.workers.dev", SUPABASE_URL = "https://hmlinyowvggqpqgzbuhw.supabase.co", SUPABASE_PUBLISHABLE_KEY = "sb_publishable_1TmnsUmG5aw_qCf-QDstzg_U4KsudR5" } }
