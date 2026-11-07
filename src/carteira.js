@@ -1533,6 +1533,30 @@ async function setSellerActive(seller, active) {
   } catch (error) { status.textContent = error.message; }
 }
 
+function qrPngDataUrl(qr, cellSize = 8, margin = 4) {
+  const gifDataUrl = qr.createDataURL(cellSize, margin);
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => {
+      const canvas = document.createElement("canvas");
+      canvas.width = image.naturalWidth;
+      canvas.height = image.naturalHeight;
+      const context = canvas.getContext("2d");
+      if (!context || !canvas.width || !canvas.height) {
+        reject(new Error("Não foi possível preparar a imagem do QR Code."));
+        return;
+      }
+      context.fillStyle = "#fff";
+      context.fillRect(0, 0, canvas.width, canvas.height);
+      context.drawImage(image, 0, 0);
+      try { resolve(canvas.toDataURL("image/png")); }
+      catch { reject(new Error("Não foi possível preparar a imagem do QR Code.")); }
+    };
+    image.onerror = () => reject(new Error("Não foi possível preparar a imagem do QR Code."));
+    image.src = gifDataUrl;
+  });
+}
+
 async function createSeller(event) {
   event.preventDefault();
   const button = $("sellerCreateBtn"); const status = $("sellerManagementStatus");
@@ -1542,7 +1566,7 @@ async function createSeller(event) {
     const id = crypto.randomUUID();
     const canonical = new URL("/", QR_PRODUCTION_ORIGIN); canonical.searchParams.set("vendedor", id);
     const qr = qrcode(0, "M"); qr.addData(canonical.href); qr.make();
-    const qrPng = qr.createDataURL(8, 4);
+    const qrPng = await qrPngDataUrl(qr, 8, 4);
     const headers = await sellerApiHeaders();
     const response = await fetch("/api/sellers", { method: "POST", headers, body: JSON.stringify({
       sellerId: id, name: $("sellerName").value.trim(), email: $("sellerEmail").value.trim(),
@@ -1565,7 +1589,7 @@ async function retrySellerDelivery(seller) {
     const canonical = new URL("/", QR_PRODUCTION_ORIGIN); canonical.searchParams.set("vendedor", seller.id);
     const qr = qrcode(0, "M"); qr.addData(canonical.href); qr.make();
     const headers = await sellerApiHeaders();
-    const response = await fetch("/api/sellers/" + encodeURIComponent(seller.id) + "/retry", { method: "POST", headers, body: JSON.stringify({ qrPng: qr.createDataURL(8, 4) }) });
+    const response = await fetch("/api/sellers/" + encodeURIComponent(seller.id) + "/retry", { method: "POST", headers, body: JSON.stringify({ qrPng: await qrPngDataUrl(qr, 8, 4) }) });
     const result = await response.json(); if (!response.ok) throw new Error(result.error || "Não foi possível reenviar.");
     status.textContent = result.message || "Reenvio processado."; await loadSellerManagement();
   } catch (error) { status.textContent = error.message; }
