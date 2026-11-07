@@ -96,7 +96,8 @@ function slugify(value) {
 }
 
 async function sendSellerEmail(env, email, name, qrUrl, qrPng, inviteUrl, slug) {
-  const png = qrPng.split(",")[1];
+  // qrBase64() already returns the validated base64 payload, without a data URL prefix.
+  const png = qrPng;
   const response = await fetch("https://api.resend.com/emails", {
     method: "POST",
     headers: { Authorization: "Bearer " + env.RESEND_API_KEY, "content-type": "application/json" },
