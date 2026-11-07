@@ -1873,9 +1873,17 @@ async function loadSellerManagement() {
     supSelect.classList.toggle("hidden", payload.role === "SUPERVISOR");
     for (const [select, choices, label] of [[execSelect, payload.assignableExecutives, "Selecione o executivo"], [supSelect, payload.assignableSupervisors, "Selecione o supervisor"]]) {
       select.replaceChildren(new Option(label, ""));
-      (choices || []).forEach(choice => select.add(new Option(choice.label, choice.id)));
+      (choices || []).forEach(choice => {
+        const option = new Option(choice.label, choice.id);
+        if (choice.executiveUserId) option.dataset.executiveUserId = choice.executiveUserId;
+        select.add(option);
+      });
       if (!choices?.length) select.classList.add("hidden");
     }
+    supSelect.onchange = () => {
+      const executiveId = supSelect.selectedOptions[0]?.dataset.executiveUserId;
+      if (payload.role === "GERENTE" && executiveId) execSelect.value = executiveId;
+    };
     rows.replaceChildren();
     (payload.sellers || []).forEach(seller => {
       const tr = document.createElement("tr");
