@@ -15,6 +15,22 @@ function jsonResponse(body, status = 200) {
   });
 }
 
+function walletSupabaseConfig(env) {
+  const preview = env.WALLET_PREVIEW === "true";
+  if (!preview && env.SUPABASE_URL === undefined && env.SUPABASE_PUBLISHABLE_KEY === undefined) {
+    return { url: SUPABASE_URL, key: SUPABASE_PUBLISHABLE_KEY };
+  }
+
+  const url = env.SUPABASE_URL?.trim().replace(/\/$/, "");
+  const key = env.SUPABASE_PUBLISHABLE_KEY?.trim();
+  if (!/^https:\/\/[a-z0-9.-]+$/i.test(url ?? "") ||
+      !/^sb_publishable_[a-z0-9_-]+$/i.test(key ?? "")) return null;
+
+  const productionUrl = url.toLowerCase() === SUPABASE_URL;
+  if (productionUrl !== (key === SUPABASE_PUBLISHABLE_KEY) || (preview && productionUrl)) return null;
+  return { url, key };
+}
+
 function serviceHeaders(env, extra = {}) {
   return {
     apikey: env.SUPABASE_SERVICE_ROLE_KEY || "",
@@ -24,7 +40,7 @@ function serviceHeaders(env, extra = {}) {
 }
 
 async function serviceRequest(env, endpoint, options = {}) {
-  const response = await fetch(SUPABASE_URL + endpoint, {
+  const response = await fetch(env.SUPABASE_URL + endpoint, {
     ...options,
     headers: serviceHeaders(env, options.headers || {})
   });
@@ -42,8 +58,8 @@ async function requireLeader(request, env) {
   if (!env.SUPABASE_SERVICE_ROLE_KEY) return { error: jsonResponse({ error: "Gestão de vendedores indisponível." }, 503) };
   let userResponse;
   try {
-    userResponse = await fetch(SUPABASE_URL + "/auth/v1/user", {
-      headers: { apikey: SUPABASE_PUBLISHABLE_KEY, Authorization: authorization }
+    userResponse = await fetch(env.SUPABASE_URL + "/auth/v1/user", {
+      headers: { apikey: env.SUPABASE_PUBLISHABLE_KEY, Authorization: authorization }
     });
   } catch {
     return { error: jsonResponse({ error: "Não foi possível validar a sessão." }, 503) };
@@ -376,13 +392,6 @@ function buildWhatsappInviteUrl(phone, name, qrUrl) {
   return "https://wa.me/" + recipient + "?text=" + encodeURIComponent(message);
 }
 
-async function routeLeaderSellers(request, env, url) {
-  if (url.pathname === "/api/sellers" || url.pathname.startsWith("/api/sellers/")) {
-    return leaderSellersApi(request, env, url);
-  }
-  return null;
-}
-
 function html(body) {
   return new Response(body, {
     headers: {
@@ -391,7 +400,7 @@ function html(body) {
   });
 }
 
-function page() {
+function page(config) {
   return html(`<!doctype html>
 <html lang="pt-BR">
 <head>
@@ -932,6 +941,17 @@ th{
 </div>
 
 
+<dialog id="observationDialog" aria-labelledby="observationTitle">
+  <form id="observationForm">
+    <h2 id="observationTitle">Editar observação</h2>
+    <label for="observationInput">Observação (até 2.000 caracteres)</label>
+    <textarea id="observationInput" rows="5" autofocus></textarea>
+    <p id="observationError" role="alert"></p>
+    <button type="button" id="cancelObservation">Cancelar</button>
+    <button type="submit" id="saveObservation">Salvar</button>
+  </form>
+</dialog>
+
 <script>
 
 // Keep the recovery panel usable even if the external SDK fails to load.
@@ -949,15 +969,19 @@ const {
   createClient
 } = supabase;
 
+// Capture the callback before the SDK consumes and clears its fragment.
+const passwordLinkType = new URLSearchParams(window.location.hash.slice(1)).get("type");
+let passwordSetupPending = ["invite", "recovery"].includes(passwordLinkType);
 
 const client = createClient(
-  ${JSON.stringify(SUPABASE_URL)},
-  ${JSON.stringify(SUPABASE_PUBLISHABLE_KEY)}
+  ${JSON.stringify(config.url)},
+  ${JSON.stringify(config.key)}
 );
 
 
 let leads = [];
 let isManager = false;
+let editingObservation = null;
 let leaderRole = "";
 let sellerTeamData = null;
 const QR_PRODUCTION_ORIGIN = "https://maquina-de-lider.juliano-misael.workers.dev";
@@ -1108,11 +1132,14 @@ async function loadLeads() {
       const fieldsByLead = new Map(
         (privateFields || []).map(fields => [fields.lead_id, fields])
       );
-      leads = leads.map(lead => ({
-        ...lead,
-        observation: fieldsByLead.get(lead.id)?.observation ?? "",
-        crm_external_id: fieldsByLead.get(lead.id)?.crm_external_id ?? ""
-      }));
+      leads = leads.map(lead => {
+        const fields = fieldsByLead.get(lead.id);
+        return fields ? {
+          ...lead,
+          observation: fields.observation,
+          crm_external_id: fields.crm_external_id
+        } : lead;
+      });
     }
   }
 
@@ -1270,7 +1297,9 @@ function render() {
         "</td>" +
 
         (isManager ?
-          "<td>" + escapeHtml(lead.observation) + "</td>" +
+          "<td>" + escapeHtml(lead.observation) +
+          (lead.observation !== undefined ? '<br><button type="button" data-observation-lead="' +
+            escapeHtml(lead.id) + '">Editar observação</button>' : "") + "</td>" +
           "<td>" + escapeHtml(lead.crm_external_id) + "</td>" : "") +
 
       "</tr>"
@@ -1278,6 +1307,72 @@ function render() {
 
 }
 
+
+$("rows").addEventListener("click", event => {
+  const button = event.target.closest("[data-observation-lead]");
+  if (!isManager || !button) return;
+  const lead = leads.find(item =>
+    item.id === button.dataset.observationLead && item.observation !== undefined
+  );
+  if (!lead) return;
+
+  editingObservation = lead;
+  $("observationInput").value = lead.observation ?? "";
+  $("observationError").textContent = "";
+  $("observationDialog").showModal();
+});
+
+$("cancelObservation").onclick = () => $("observationDialog").close();
+$("observationDialog").addEventListener("cancel", event => {
+  if ($("saveObservation").disabled) event.preventDefault();
+});
+$("observationDialog").addEventListener("close", () => {
+  $("observationInput").value = "";
+  editingObservation = null;
+});
+
+$("observationForm").addEventListener("submit", async event => {
+  event.preventDefault();
+  const lead = editingObservation;
+  const save = $("saveObservation");
+  if (!isManager || !lead || save.disabled) return;
+
+  const input = $("observationInput");
+  const observation = input.value.trim() || null;
+  const errorMessage = $("observationError");
+  if (observation && Array.from(observation).length > 2000) {
+    errorMessage.textContent = "Use até 2.000 caracteres.";
+    return;
+  }
+
+  errorMessage.textContent = "";
+  save.disabled = $("cancelObservation").disabled = input.disabled = true;
+  try {
+    const { data, error } = await client.rpc("manager_update_lead_observation", {
+      p_lead_id: lead.id,
+      p_expected_observation: lead.observation,
+      p_observation: observation
+    });
+    if (error?.code === "PT409") {
+      $("observationDialog").close();
+      await loadLeads();
+      $("managerMessage").textContent = "A observação mudou. Confira o valor atual antes de editar novamente.";
+      return;
+    }
+    if (error) throw error;
+
+    lead.observation = data;
+    $("observationDialog").close();
+    render();
+    $("managerMessage").textContent = "Observação salva.";
+  } catch (error) {
+    errorMessage.textContent = error.code === "42501"
+      ? "Seu perfil não tem permissão para editar observações."
+      : "Não foi possível salvar a observação. Tente novamente.";
+  } finally {
+    save.disabled = $("cancelObservation").disabled = input.disabled = false;
+  }
+});
 
 async function login() {
 
@@ -1314,6 +1409,8 @@ async function login() {
 
 
 function showPasswordPanel() {
+  passwordSetupPending = true;
+  $("app").classList.add("hidden");
   $("login").classList.remove("hidden");
   $("loginForm").classList.add("hidden");
   $("resetPanel").classList.add("hidden");
@@ -1393,18 +1490,28 @@ async function savePassword() {
     return;
   }
 
+  passwordSetupPending = false;
   window.history.replaceState({}, document.title, window.location.pathname);
   await showApp();
 }
 
 
 async function showApp() {
+  if (passwordSetupPending) return;
 
   let user;
   try {
     const { data, error } = await client.auth.getUser();
     if (error) throw error;
     user = data?.user;
+    if (user) {
+      const { data: ready, error: readinessError } = await client.rpc("wallet_password_ready");
+      if (readinessError) throw readinessError;
+      if (ready !== true) {
+        showPasswordPanel();
+        return;
+      }
+    }
   } catch (error) {
     $("loginError").textContent =
       "Não foi possível confirmar sua sessão. Verifique sua conexão e tente novamente.";
@@ -1775,12 +1882,15 @@ $("logoutBtn")
 
 (async () => {
   try {
-    const recovery = new URLSearchParams(window.location.hash.slice(1)).get("type") === "recovery";
     const { data, error } = await client.auth.getSession();
     if (error) throw error;
 
-    if (recovery) {
+    if (passwordSetupPending && data.session) {
       showPasswordPanel();
+    } else if (passwordSetupPending) {
+      passwordSetupPending = false;
+      $("login").classList.remove("hidden");
+      $("loginError").textContent = "Link inválido ou expirado. Solicite um novo link de primeiro acesso.";
     } else if (data.session) {
       await showApp();
       if ($("app").classList.contains("hidden")) {
@@ -1815,17 +1925,17 @@ export default {
     const url =
       new URL(request.url);
 
-    const apiResponse = await routeLeaderSellers(request, env, url);
-    if (apiResponse) return apiResponse;
-
-
-    if (
-      url.pathname === "/carteira" ||
-      url.pathname === "/carteira/"
-    ) {
-
-      return page();
-
+    const isWallet = url.pathname === "/carteira" || url.pathname === "/carteira/";
+    const isSellerApi = url.pathname === "/api/sellers" || url.pathname.startsWith("/api/sellers/");
+    if (isWallet || isSellerApi) {
+      const config = walletSupabaseConfig(env);
+      if (!config) return jsonResponse({ error: "Configuração da carteira indisponível." }, 503);
+      if (isWallet) return page(config);
+      return leaderSellersApi(request, {
+        ...env,
+        SUPABASE_URL: config.url,
+        SUPABASE_PUBLISHABLE_KEY: config.key
+      }, url);
     }
 
 
