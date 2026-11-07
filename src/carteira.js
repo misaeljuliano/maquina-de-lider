@@ -120,14 +120,14 @@ async function sendSellerEmail(env, email, name, qrUrl, qrPng, inviteUrl, slug) 
   return { ok: response.ok, status: response.status, errorMessage };
 }
 
-async function createInviteLink(env, email, name, role = "VENDEDOR") {
+async function createInviteLink(env, email, name, role = "VENDEDOR", requestOrigin = "") {
   return serviceRequest(env, "/auth/v1/admin/generate_link", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
       type: "invite", email,
       data: { name, role },
-      redirect_to: walletPublicOrigin(env) + "/carteira"
+      redirect_to: walletPublicOrigin(env, requestOrigin) + "/carteira"
     })
   });
 }
@@ -149,19 +149,19 @@ async function findPendingAuthUser(env, email) {
   return user;
 }
 
-async function createRecoveryLink(env, email) {
+async function createRecoveryLink(env, email, requestOrigin = "") {
   return serviceRequest(env, "/auth/v1/admin/generate_link", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
       type: "recovery", email,
-      redirect_to: walletPublicOrigin(env) + "/carteira"
+      redirect_to: walletPublicOrigin(env, requestOrigin) + "/carteira"
     })
   });
 }
 
-async function createSellerAuthLink(env, email, name) {
-  const invite = await createInviteLink(env, email, name);
+async function createSellerAuthLink(env, email, name, requestOrigin = "") {
+  const invite = await createInviteLink(env, email, name, "VENDEDOR", requestOrigin);
   const inviteUrl = generatedActionLink(invite);
   const userId = generatedUserId(invite);
   if (invite.ok && SELLER_ID_RE.test(userId || "") && typeof inviteUrl === "string") {
@@ -171,7 +171,7 @@ async function createSellerAuthLink(env, email, name) {
 
   const pendingUser = await findPendingAuthUser(env, email);
   if (!pendingUser) return { ...invite, userId, inviteUrl };
-  const recovery = await createRecoveryLink(env, email);
+  const recovery = await createRecoveryLink(env, email, requestOrigin);
   return {
     ...recovery,
     userId: pendingUser.id,
@@ -179,19 +179,23 @@ async function createSellerAuthLink(env, email, name) {
   };
 }
 
-function walletPublicOrigin(env) {
+function walletPublicOrigin(env, requestOrigin = "") {
   if (env.WALLET_PREVIEW === "true") {
     try {
+      const request = new URL(String(requestOrigin || ""));
+      if (request.protocol === "https:" && request.origin === requestOrigin && request.hostname.endsWith(".workers.dev")) return request.origin;
+    } catch { /* Preview must never fall back to production. */ }
+    try {
       const configured = new URL(String(env.WALLET_PUBLIC_ORIGIN || ""));
-      if (configured.protocol === "https:" && configured.origin === env.WALLET_PUBLIC_ORIGIN) return configured.origin;
+      if (configured.protocol === "https:" && configured.origin === env.WALLET_PUBLIC_ORIGIN && configured.hostname.endsWith(".workers.dev")) return configured.origin;
     } catch { /* Preview must never fall back to production. */ }
     return "";
   }
   return QR_PRODUCTION_ORIGIN;
 }
 
-async function createLeaderAuthLink(env, email, name, role) {
-  const invite = await createInviteLink(env, email, name, role);
+async function createLeaderAuthLink(env, email, name, role, requestOrigin = "") {
+  const invite = await createInviteLink(env, email, name, role, requestOrigin);
   const inviteUrl = generatedActionLink(invite);
   const userId = generatedUserId(invite);
   if (invite.ok && SELLER_ID_RE.test(userId || "") && typeof inviteUrl === "string") {
@@ -414,7 +418,7 @@ async function leaderHierarchyApi(request, env, url) {
       const roles = await getSellerRoles(env, [parentId]);
       if (roles[parentId] !== "EXECUTIVO") return jsonResponse({ error: "Selecione um Executivo/Coordenador válido." }, 400);
     }
-    const invite = await createLeaderAuthLink(env, email, name, role);
+    const invite = await createLeaderAuthLink(env, email, name, role, url.origin);
     const userId = invite.userId;
     if (!invite.ok || !SELLER_ID_RE.test(userId || "") || !invite.inviteUrl) {
       return jsonResponse({ error: invite.status === 422 ? "Já existe uma conta com esse e-mail; use um e-mail ainda não cadastrado." : "Não foi possível gerar o convite." }, invite.status === 422 ? 409 : 502);
@@ -453,7 +457,7 @@ async function leaderHierarchyApi(request, env, url) {
     const email = authUser.data?.email;
     const name = authUser.data?.user_metadata?.name || "Líder";
     if (!email) return jsonResponse({ error: "Não foi possível localizar o e-mail do convite." }, 503);
-    const recovery = await createRecoveryLink(env, email);
+    const recovery = await createRecoveryLink(env, email, url.origin);
     const inviteUrl = generatedActionLink(recovery);
     if (!recovery.ok || !inviteUrl) return jsonResponse({ error: "Não foi possível recriar o link de acesso." }, 502);
     const emailResult = await sendLeaderInviteEmail(env, email, name, target.role, inviteUrl).catch(() => ({ ok: false, status: 502 }));
@@ -585,7 +589,7 @@ async function leaderSellersApi(request, env, url) {
       return jsonResponse({ error: "A atribuição precisa apontar para contas já cadastradas no perfil correspondente." }, 400);
     }
 
-    const invite = await createSellerAuthLink(env, email, name);
+    const invite = await createSellerAuthLink(env, email, name, url.origin);
     const inviteUrl = invite.inviteUrl;
     const userId = invite.userId;
     if (!invite.ok || !SELLER_ID_RE.test(userId || "") || typeof inviteUrl !== "string") {
@@ -666,7 +670,7 @@ async function leaderSellersApi(request, env, url) {
     const authUser = await serviceRequest(env, "/auth/v1/admin/users/" + target.seller_user_id);
     const email = authUser.data?.email;
     if (!email) return jsonResponse({ error: "Não foi possível localizar o e-mail de convite." }, 503);
-    const invite = onboarding.data[0].email_status === "sent" ? null : await createSellerAuthLink(env, email, target.name);
+    const invite = onboarding.data[0].email_status === "sent" ? null : await createSellerAuthLink(env, email, target.name, url.origin);
     const inviteUrl = invite?.inviteUrl;
     if (invite && (!invite.ok || typeof inviteUrl !== "string")) return jsonResponse({ error: "Não foi possível recriar o convite por e-mail." }, 502);
     return await deliverSellerOnboarding(env, {
