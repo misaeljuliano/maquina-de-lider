@@ -15,7 +15,8 @@ AS $$
   );
 $$;
 
-REVOKE ALL ON FUNCTION public.wallet_password_ready() FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.wallet_password_ready()
+  FROM PUBLIC, anon, authenticated, service_role;
 GRANT EXECUTE ON FUNCTION public.wallet_password_ready() TO authenticated;
 
 CREATE POLICY leads_password_ready ON public.leads
@@ -29,3 +30,4 @@ CREATE POLICY sellers_password_ready ON public.sellers
   WITH CHECK ((SELECT public.wallet_password_ready()));
 
 COMMIT;
+
