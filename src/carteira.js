@@ -989,6 +989,10 @@ let isManager = false;
 let editingObservation = null;
 let leaderRole = "";
 let sellerTeamData = null;
+let sellerAccessGuardUserId = "";
+let sellerAccessGuardBusy = false;
+let sellerAccessVisibilityHandler = null;
+let sellerAccessFocusHandler = null;
 const QR_PRODUCTION_ORIGIN = ${JSON.stringify(publicOrigin)};
 
 
@@ -1501,6 +1505,85 @@ async function savePassword() {
 }
 
 
+function clearSellerWalletData() {
+  leads = [];
+  $("total").textContent = "0";
+  $("novos").textContent = "0";
+  $("propostas").textContent = "0";
+  $("vendas").textContent = "0";
+  $("rows").replaceChildren();
+}
+
+function stopSellerAccessGuard() {
+  if (sellerAccessVisibilityHandler) {
+    document.removeEventListener("visibilitychange", sellerAccessVisibilityHandler);
+  }
+  if (sellerAccessFocusHandler) {
+    window.removeEventListener("focus", sellerAccessFocusHandler);
+  }
+  sellerAccessVisibilityHandler = null;
+  sellerAccessFocusHandler = null;
+  sellerAccessGuardUserId = "";
+}
+
+async function verifySellerAccessOnResume() {
+  const expectedUserId = sellerAccessGuardUserId;
+  if (!expectedUserId || sellerAccessGuardBusy || document.visibilityState === "hidden") return;
+
+  sellerAccessGuardBusy = true;
+  try {
+    const { data: userData, error: userError } = await client.auth.getUser();
+    if (userError) throw userError;
+    if (userData?.user?.id !== expectedUserId) {
+      stopSellerAccessGuard();
+      return;
+    }
+
+    const { data: activeSeller, error: sellerAccessError } = await client
+      .from("sellers")
+      .select("id")
+      .eq("seller_user_id", expectedUserId)
+      .eq("active", true)
+      .maybeSingle();
+
+    if (sellerAccessError) throw sellerAccessError;
+    if (!activeSeller) {
+      stopSellerAccessGuard();
+      clearSellerWalletData();
+      $("app").classList.add("hidden");
+      $("login").classList.remove("hidden");
+      $("loginForm").classList.remove("hidden");
+      $("loginError").textContent = "Seu acesso à carteira está desativado. Fale com seu gerente para reativá-lo.";
+      const { error: signOutError } = await client.auth.signOut();
+      if (signOutError) console.error(signOutError);
+      return;
+    }
+
+    await loadLeads();
+  } catch (error) {
+    clearSellerWalletData();
+    $("message").textContent = "Não foi possível confirmar seu acesso. Atualize a página para tentar novamente.";
+    console.error(error);
+  } finally {
+    sellerAccessGuardBusy = false;
+  }
+}
+
+function startSellerAccessGuard(userId) {
+  stopSellerAccessGuard();
+  sellerAccessGuardUserId = userId;
+  sellerAccessVisibilityHandler = () => {
+    if (document.visibilityState === "hidden") {
+      clearSellerWalletData();
+      return;
+    }
+    void verifySellerAccessOnResume();
+  };
+  sellerAccessFocusHandler = () => void verifySellerAccessOnResume();
+  document.addEventListener("visibilitychange", sellerAccessVisibilityHandler);
+  window.addEventListener("focus", sellerAccessFocusHandler);
+}
+
 async function showApp() {
   if (passwordSetupPending) return;
 
@@ -1557,15 +1640,21 @@ async function showApp() {
       .maybeSingle();
 
     if (sellerAccessError || !activeSeller) {
+      stopSellerAccessGuard();
+      clearSellerWalletData();
       await client.auth.signOut();
       $("app").classList.add("hidden");
       $("login").classList.remove("hidden");
+      $("loginForm").classList.remove("hidden");
       $("loginError").textContent = sellerAccessError
         ? "Não foi possível confirmar se seu acesso está ativo. Tente novamente."
         : "Seu acesso à carteira está desativado. Fale com seu gerente para reativá-lo.";
       if (sellerAccessError) console.error(sellerAccessError);
       return;
     }
+    startSellerAccessGuard(user.id);
+  } else {
+    stopSellerAccessGuard();
   }
 
   $("managerObservationHeader").classList.toggle("hidden", !isManager);
@@ -1883,6 +1972,10 @@ client.auth.onAuthStateChange((event) => {
   if (event === "PASSWORD_RECOVERY") {
     showPasswordPanel();
   }
+  if (event === "SIGNED_OUT") {
+    stopSellerAccessGuard();
+    clearSellerWalletData();
+  }
 });
 
 
@@ -1924,6 +2017,8 @@ $("logoutBtn")
       button.textContent = "Saindo...";
 
       try {
+        stopSellerAccessGuard();
+        clearSellerWalletData();
         const { error } = await client.auth.signOut();
         if (error) throw error;
 
