@@ -8,10 +8,11 @@
 
 - Branch de origem: `feat/gerente-lead-observation`.
 - HEAD da branch de origem: `42d3bbf3f3b64bf8dfc9031c8d2eb18961e83637` (`Add secure leader deactivation`), igual a `origin/feat/gerente-lead-observation` no início do checkpoint.
-- `origin/main`: `2e04630afa1314bde7361abb3938218f54923b7b` (`Escape seller WhatsApp helper in page script`).
+- GitHub `main` confirmado no fechamento: `61fba2459f55dbd60dd32fd0379f1312b2d86249` (`Publicar hierarquia e melhorias da Minha Carteira`). Esse commit tem `42d3bbf` como base e não acrescenta diferença de arquivos em relação a ela.
+- A referência local `origin/main` estava desatualizada em `2e04630afa1314bde7361abb3938218f54923b7b`; por isso a comparação local inicial de 11 arquivos não representa a diferença entre a branch de trabalho e o `main` remoto atual.
 - Remote `origin`: `https://github.com/misaeljuliano/maquina-de-lider.git`.
 - Havia duas alterações locais não commitadas. Elas foram incluídas neste checkpoint para evitar perda: `supabase/review/wallet_first_access.sql` e `tests/lead-observation.sql`.
-- A branch de checkpoint parte do HEAD de trabalho acima e preserva os commits existentes da branch de funcionalidade. Não altera `main` nem a branch original.
+- A branch de checkpoint parte do HEAD de trabalho acima e preserva os commits existentes da branch de funcionalidade. O `main` remoto permaneceu em `61fba2459f55dbd60dd32fd0379f1312b2d86249`; a branch original permaneceu em `42d3bbf`.
 
 ## Conversas e escopo incluídos
 
