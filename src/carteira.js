@@ -15,6 +15,22 @@ function jsonResponse(body, status = 200) {
   });
 }
 
+function walletSupabaseConfig(env) {
+  const preview = env.WALLET_PREVIEW === "true";
+  if (!preview && env.SUPABASE_URL === undefined && env.SUPABASE_PUBLISHABLE_KEY === undefined) {
+    return { url: SUPABASE_URL, key: SUPABASE_PUBLISHABLE_KEY };
+  }
+
+  const url = env.SUPABASE_URL?.trim().replace(/\/$/, "");
+  const key = env.SUPABASE_PUBLISHABLE_KEY?.trim();
+  if (!/^https:\/\/[a-z0-9.-]+$/i.test(url ?? "") ||
+      !/^sb_publishable_[a-z0-9_-]+$/i.test(key ?? "")) return null;
+
+  const productionUrl = url.toLowerCase() === SUPABASE_URL;
+  if (productionUrl !== (key === SUPABASE_PUBLISHABLE_KEY) || (preview && productionUrl)) return null;
+  return { url, key };
+}
+
 function serviceHeaders(env, extra = {}) {
   return {
     apikey: env.SUPABASE_SERVICE_ROLE_KEY || "",
@@ -24,7 +40,7 @@ function serviceHeaders(env, extra = {}) {
 }
 
 async function serviceRequest(env, endpoint, options = {}) {
-  const response = await fetch(SUPABASE_URL + endpoint, {
+  const response = await fetch(env.SUPABASE_URL + endpoint, {
     ...options,
     headers: serviceHeaders(env, options.headers || {})
   });
@@ -42,8 +58,8 @@ async function requireLeader(request, env) {
   if (!env.SUPABASE_SERVICE_ROLE_KEY) return { error: jsonResponse({ error: "Gestão de vendedores indisponível." }, 503) };
   let userResponse;
   try {
-    userResponse = await fetch(SUPABASE_URL + "/auth/v1/user", {
-      headers: { apikey: SUPABASE_PUBLISHABLE_KEY, Authorization: authorization }
+    userResponse = await fetch(env.SUPABASE_URL + "/auth/v1/user", {
+      headers: { apikey: env.SUPABASE_PUBLISHABLE_KEY, Authorization: authorization }
     });
   } catch {
     return { error: jsonResponse({ error: "Não foi possível validar a sessão." }, 503) };
@@ -56,6 +72,17 @@ async function requireLeader(request, env) {
   const roles = (result.data || []).map(row => row.role);
   const role = LEADER_ROLES.find(item => roles.includes(item));
   if (!role) return { error: jsonResponse({ error: "Somente gerente, executivo ou supervisor pode gerir vendedores." }, 403) };
+  if (role !== "GERENTE") {
+    const profile = await getLeaderProfile(env, user.id);
+    if (!profile?.active) return { error: jsonResponse({ error: "Seu acesso de liderança está desativado. Fale com o gerente." }, 403) };
+    if (role === "SUPERVISOR" && profile.executive_user_id) {
+      const executive = await getLeaderProfile(env, profile.executive_user_id);
+      const executiveRoles = await getSellerRoles(env, [profile.executive_user_id]);
+      if (!executive?.active || executiveRoles?.[profile.executive_user_id] !== "EXECUTIVO") {
+        return { error: jsonResponse({ error: "O acesso da equipe está suspenso porque o executivo responsável está desativado." }, 403) };
+      }
+    }
+  }
   return { user, role };
 }
 
@@ -98,6 +125,7 @@ function slugify(value) {
 async function sendSellerEmail(env, email, name, qrUrl, qrPng, inviteUrl, slug) {
   // qrBase64() already returns the validated base64 payload, without a data URL prefix.
   const png = qrPng;
+
   const response = await fetch("https://api.resend.com/emails", {
     method: "POST",
     headers: { Authorization: "Bearer " + env.RESEND_API_KEY, "content-type": "application/json" },
@@ -120,14 +148,15 @@ async function sendSellerEmail(env, email, name, qrUrl, qrPng, inviteUrl, slug) 
   return { ok: response.ok, status: response.status, errorMessage };
 }
 
-async function createInviteLink(env, email, name) {
-  return serviceRequest(env, "/auth/v1/admin/generate_link", {
+async function createInviteLink(env, email, name, role = "VENDEDOR") {
+  const redirect = encodeURIComponent(env.WALLET_PUBLIC_ORIGIN + "/carteira");
+  return serviceRequest(env, "/auth/v1/admin/generate_link?redirect_to=" + redirect, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
       type: "invite", email,
-      data: { name, role: "VENDEDOR" },
-      redirect_to: QR_PRODUCTION_ORIGIN + "/carteira"
+      data: { name, role }
+
     })
   });
 }
@@ -155,13 +184,13 @@ async function createRecoveryLink(env, email) {
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
       type: "recovery", email,
-      redirect_to: QR_PRODUCTION_ORIGIN + "/carteira"
+      redirect_to: env.WALLET_PUBLIC_ORIGIN + "/carteira"
     })
   });
 }
 
-async function createSellerAuthLink(env, email, name) {
-  const invite = await createInviteLink(env, email, name);
+async function createSellerAuthLink(env, email, name, role = "VENDEDOR") {
+  const invite = await createInviteLink(env, email, name, role);
   const inviteUrl = generatedActionLink(invite);
   const userId = generatedUserId(invite);
   if (invite.ok && SELLER_ID_RE.test(userId || "") && typeof inviteUrl === "string") {
@@ -190,6 +219,13 @@ async function getTeamRows(env, leader) {
   return result.ok && Array.isArray(result.data) ? result.data : null;
 }
 
+async function getLeaderProfile(env, userId) {
+  if (!SELLER_ID_RE.test(userId || "")) return null;
+  const result = await serviceRequest(env, "/rest/v1/sellers?seller_user_id=eq." + userId +
+    "&select=id,slug,name,active,seller_user_id,supervisor_user_id,executive_user_id&limit=1");
+  return result.ok && Array.isArray(result.data) ? result.data[0] || null : null;
+}
+
 async function getAdminUserLabel(env, userId) {
   if (!SELLER_ID_RE.test(userId || "")) return "";
   const result = await serviceRequest(env, "/auth/v1/admin/users/" + userId);
@@ -201,7 +237,7 @@ async function getSellerRoles(env, userIds) {
   const ids = [...new Set(userIds.filter(id => SELLER_ID_RE.test(id || "")))];
   if (!ids.length) return {};
   const response = await serviceRequest(env, "/rest/v1/user_roles?user_id=in.(" + ids.join(",") + ")&select=user_id,role");
-  if (!response.ok) return {};
+  if (!response.ok || !Array.isArray(response.data)) return null;
   return Object.fromEntries((response.data || []).map(item => [item.user_id, item.role]));
 }
 
@@ -212,6 +248,100 @@ async function getOnboardingMap(env, sellers) {
   const response = await serviceRequest(env, "/rest/v1/seller_onboarding?seller_id=in.(" + ids.join(",") + ")&select=seller_id,email_status,whatsapp_status,email_error,whatsapp_error,attempt_count");
   if (!response.ok) return new Map();
   return new Map((response.data || []).map(item => [item.seller_id, item]));
+}
+
+async function transferTeamMember(env, leader, target, targetRole, body) {
+  const team = await getTeamRows(env, leader);
+  if (!team) return jsonResponse({ error: "Não foi possível validar os limites da equipe." }, 503);
+  const leaderProfile = leader.role === "SUPERVISOR" ? await getLeaderProfile(env, leader.user.id) : null;
+  const roleMap = await getSellerRoles(env, [
+    ...team.map(item => item.seller_user_id),
+    ...team.map(item => item.executive_user_id),
+    ...team.map(item => item.supervisor_user_id),
+    leaderProfile?.executive_user_id
+  ]);
+  if (!roleMap) return jsonResponse({ error: "Não foi possível confirmar os perfis da equipe." }, 503);
+  const destinationExecutive = String(body.executiveUserId || "") || null;
+  const destinationSupervisor = String(body.supervisorUserId || "") || null;
+  let executiveUserId = null;
+  let supervisorUserId = null;
+  let moveTeam = false;
+
+  if (targetRole === "EXECUTIVO") {
+    return jsonResponse({ error: "Um executivo não pode ser transferido para outra carteira." }, 400);
+  }
+
+  if (targetRole === "SUPERVISOR") {
+    if (leader.role !== "GERENTE") return jsonResponse({ error: "Somente o gerente pode transferir um supervisor." }, 403);
+    if (destinationSupervisor) return jsonResponse({ error: "Selecione o executivo de destino do supervisor." }, 400);
+    if (destinationExecutive && (roleMap[destinationExecutive] !== "EXECUTIVO" ||
+        !team.some(item => item.seller_user_id === destinationExecutive && item.active))) {
+      return jsonResponse({ error: "O executivo de destino não está ativo na equipe." }, 400);
+    }
+    executiveUserId = destinationExecutive;
+    moveTeam = body.moveTeam === true;
+    if (body.moveTeam !== true && body.moveTeam !== false) {
+      return jsonResponse({ error: "Escolha se os vendedores da equipe acompanham o supervisor." }, 400);
+    }
+  } else if (targetRole === "VENDEDOR") {
+    const inScope = leader.role === "GERENTE"
+      || (leader.role === "EXECUTIVO" && target.executive_user_id === leader.user.id)
+      || (leader.role === "SUPERVISOR" && target.supervisor_user_id === leader.user.id);
+    if (!inScope) return jsonResponse({ error: "Esse vendedor não pertence à sua equipe." }, 403);
+
+    if (destinationSupervisor) {
+      const supervisor = team.find(item => item.seller_user_id === destinationSupervisor && item.active);
+      if (!supervisor || roleMap[destinationSupervisor] !== "SUPERVISOR") {
+        return jsonResponse({ error: "O supervisor de destino não está ativo na sua equipe." }, 400);
+      }
+      if (leader.role === "SUPERVISOR") return jsonResponse({ error: "Supervisor só pode retirar vendedores da própria equipe." }, 403);
+      executiveUserId = supervisor.executive_user_id || null;
+      supervisorUserId = destinationSupervisor;
+      if (leader.role === "EXECUTIVO" && executiveUserId !== leader.user.id) {
+        return jsonResponse({ error: "O supervisor de destino pertence a outro executivo." }, 403);
+      }
+    } else if (leader.role === "SUPERVISOR") {
+      if (!leaderProfile?.active || !leaderProfile.executive_user_id) {
+        return jsonResponse({ error: "Não foi possível confirmar o executivo responsável pelo supervisor." }, 409);
+      }
+      if (destinationExecutive !== leaderProfile.executive_user_id) {
+        return jsonResponse({ error: "Supervisor só pode devolver um vendedor à carteira do próprio executivo." }, 403);
+      }
+      executiveUserId = leaderProfile.executive_user_id;
+    } else if (leader.role === "EXECUTIVO") {
+      if (destinationExecutive && destinationExecutive !== leader.user.id) {
+        return jsonResponse({ error: "O vendedor só pode permanecer nesta equipe executiva." }, 403);
+      }
+      executiveUserId = leader.user.id;
+    } else {
+      executiveUserId = destinationExecutive;
+      if (executiveUserId && (roleMap[executiveUserId] !== "EXECUTIVO" ||
+          !team.some(item => item.seller_user_id === executiveUserId && item.active))) {
+        return jsonResponse({ error: "O executivo de destino não está ativo na equipe." }, 400);
+      }
+    }
+  } else {
+    return jsonResponse({ error: "Perfil sem transferência disponível." }, 400);
+  }
+
+  const response = await serviceRequest(env, "/rest/v1/rpc/transfer_seller_hierarchy", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      p_seller_id: target.id,
+      p_expected_supervisor_user_id: target.supervisor_user_id || null,
+      p_expected_executive_user_id: target.executive_user_id || null,
+      p_new_supervisor_user_id: supervisorUserId,
+      p_new_executive_user_id: executiveUserId,
+      p_move_team: moveTeam
+    })
+  });
+  if (!response.ok) {
+    return jsonResponse({ error: response.status === 409
+      ? "A equipe mudou durante a transferência. Atualize a carteira e tente novamente."
+      : "Não foi possível concluir a transferência da equipe." }, response.status === 409 ? 409 : 503);
+  }
+  return jsonResponse({ ok: true, role: targetRole, executiveUserId, supervisorUserId, moveTeam });
 }
 
 async function leaderSellersApi(request, env, url) {
@@ -225,8 +355,23 @@ async function leaderSellersApi(request, env, url) {
     const sellers = await getTeamRows(env, leader);
     if (!sellers) return jsonResponse({ error: "Não foi possível carregar sua equipe." }, 503);
     const onboarding = await getOnboardingMap(env, sellers);
-    const executives = [...new Set(sellers.map(item => item.executive_user_id).filter(Boolean))];
-    const supervisors = [...new Set(sellers.map(item => item.supervisor_user_id).filter(Boolean))];
+    const leaderProfile = leader.role === "SUPERVISOR" ? await getLeaderProfile(env, leader.user.id) : null;
+    const roleMap = await getSellerRoles(env, [
+      ...sellers.map(item => item.seller_user_id),
+      ...sellers.map(item => item.executive_user_id),
+      ...sellers.map(item => item.supervisor_user_id),
+      leaderProfile?.executive_user_id, leader.user.id
+    ]);
+    if (!roleMap) return jsonResponse({ error: "Não foi possível confirmar os perfis da equipe." }, 503);
+    const executiveProfiles = sellers.filter(item => item.active && roleMap[item.seller_user_id] === "EXECUTIVO");
+    if (leaderProfile?.executive_user_id && !executiveProfiles.some(item => item.seller_user_id === leaderProfile.executive_user_id)) {
+      const parentExecutive = await getLeaderProfile(env, leaderProfile.executive_user_id);
+      if (parentExecutive?.active && roleMap[parentExecutive.seller_user_id] === "EXECUTIVO") executiveProfiles.push(parentExecutive);
+    }
+    const executives = [...new Set(executiveProfiles.map(item => item.seller_user_id).filter(Boolean))];
+    const supervisors = [...new Set(sellers
+      .filter(item => item.active && roleMap[item.seller_user_id] === "SUPERVISOR")
+      .map(item => item.seller_user_id).filter(Boolean))];
     const [executiveLabels, supervisorLabels] = await Promise.all([
       Promise.all(executives.map(async id => [id, await getAdminUserLabel(env, id)])),
       Promise.all(supervisors.map(async id => [id, await getAdminUserLabel(env, id)]))
@@ -234,10 +379,12 @@ async function leaderSellersApi(request, env, url) {
     return jsonResponse({
       role: leader.role,
       readiness,
+      currentExecutiveUserId: leader.role === "EXECUTIVO" ? leader.user.id : leaderProfile?.executive_user_id || null,
       assignableExecutives: executiveLabels.filter(([, label]) => label).map(([id, label]) => ({ id, label })),
       assignableSupervisors: supervisorLabels.filter(([, label]) => label).map(([id, label]) => ({ id, label })),
       sellers: sellers.map(seller => ({
         ...seller,
+        role: seller.seller_user_id ? roleMap[seller.seller_user_id] || "SEM PERFIL" : "VENDEDOR",
         onboarding: onboarding.get(seller.id) || null
       }))
     });
@@ -256,44 +403,80 @@ async function leaderSellersApi(request, env, url) {
     const id = String(body.sellerId || "");
     const name = String(body.name || "").trim();
     const email = String(body.email || "").trim().toLowerCase();
+    const memberRole = String(body.memberRole || "VENDEDOR").toUpperCase();
     const digits = phoneDigits(body.phone);
     const region = String(body.region || "Santos").trim();
     const qrPng = qrBase64(body.qrPng);
     if (!SELLER_ID_RE.test(id) || name.length < 2 || name.length > 120
       || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 254
-      || ![10, 11].includes(digits.length) || region.length < 2 || region.length > 80 || !qrPng) {
+      || ![10, 11].includes(digits.length) || region.length < 2 || region.length > 80 || !qrPng
+      || !["VENDEDOR", "SUPERVISOR", "EXECUTIVO"].includes(memberRole)) {
       return jsonResponse({ error: "Confira nome, e-mail, telefone e região do vendedor." }, 400);
+    }
+    if ((memberRole === "EXECUTIVO" && leader.role !== "GERENTE")
+      || (memberRole === "SUPERVISOR" && leader.role === "SUPERVISOR")) {
+      return jsonResponse({ error: "Seu perfil não pode cadastrar este nível da equipe." }, 403);
     }
 
     let executiveUserId = null;
     let supervisorUserId = null;
     const team = await getTeamRows(env, leader);
     if (!team) return jsonResponse({ error: "Não foi possível validar os limites da equipe." }, 503);
-    if (leader.role === "GERENTE") {
-      executiveUserId = body.executiveUserId || null;
-      supervisorUserId = body.supervisorUserId || null;
-      if (executiveUserId && !SELLER_ID_RE.test(executiveUserId)) return jsonResponse({ error: "Executivo inválido." }, 400);
-      if (supervisorUserId && !SELLER_ID_RE.test(supervisorUserId)) return jsonResponse({ error: "Supervisor inválido." }, 400);
-    } else if (leader.role === "EXECUTIVO") {
-      executiveUserId = leader.user.id;
-      supervisorUserId = body.supervisorUserId || null;
-      if (supervisorUserId && !team.some(item => item.supervisor_user_id === supervisorUserId)) return jsonResponse({ error: "Esse supervisor não pertence à sua equipe." }, 403);
-    } else {
-      supervisorUserId = leader.user.id;
-      executiveUserId = body.executiveUserId || [...new Set(team.map(item => item.executive_user_id).filter(Boolean))][0] || null;
-      if (executiveUserId && !team.some(item => item.executive_user_id === executiveUserId)) return jsonResponse({ error: "Esse executivo não pertence à sua equipe." }, 403);
+    const ownLeaderProfile = leader.role === "SUPERVISOR" ? await getLeaderProfile(env, leader.user.id) : null;
+    const teamRoleMap = await getSellerRoles(env, [
+      ...team.map(item => item.seller_user_id), ...team.map(item => item.executive_user_id),
+      ...team.map(item => item.supervisor_user_id), leader.user.id, ownLeaderProfile?.executive_user_id
+    ]);
+    if (!teamRoleMap) return jsonResponse({ error: "Não foi possível confirmar os perfis da equipe." }, 503);
+    const selectedExecutive = String(body.executiveUserId || "") || null;
+    const selectedSupervisor = String(body.supervisorUserId || "") || null;
+    if (memberRole === "SUPERVISOR") {
+      if (leader.role === "EXECUTIVO") executiveUserId = leader.user.id;
+      else executiveUserId = selectedExecutive;
+    } else if (memberRole === "VENDEDOR") {
+      if (leader.role === "SUPERVISOR") {
+        if (!ownLeaderProfile?.active) return jsonResponse({ error: "O supervisor precisa estar ativo e vinculado a um executivo antes de cadastrar vendedores." }, 409);
+        supervisorUserId = leader.user.id;
+        executiveUserId = ownLeaderProfile.executive_user_id || null;
+      } else if (leader.role === "EXECUTIVO") {
+        executiveUserId = leader.user.id;
+        supervisorUserId = selectedSupervisor;
+      } else {
+        executiveUserId = selectedExecutive;
+        supervisorUserId = selectedSupervisor;
+      }
     }
 
-    const roleIds = [executiveUserId, supervisorUserId].filter(Boolean);
-    const roleMap = await getSellerRoles(env, roleIds);
-    if ((executiveUserId && roleMap[executiveUserId] !== "EXECUTIVO")
-      || (supervisorUserId && roleMap[supervisorUserId] !== "SUPERVISOR")) {
+    if (executiveUserId && !SELLER_ID_RE.test(executiveUserId)) return jsonResponse({ error: "Executivo inválido." }, 400);
+    if (supervisorUserId && !SELLER_ID_RE.test(supervisorUserId)) return jsonResponse({ error: "Supervisor inválido." }, 400);
+    const supervisorProfile = supervisorUserId ? team.find(item =>
+      item.seller_user_id === supervisorUserId && teamRoleMap[supervisorUserId] === "SUPERVISOR" && item.active
+    ) || (supervisorUserId === leader.user.id && ownLeaderProfile?.active ? ownLeaderProfile : null) : null;
+    if (supervisorUserId && !supervisorProfile) {
+      return jsonResponse({ error: "O supervisor selecionado não está ativo dentro da sua equipe." }, 403);
+    }
+    if (supervisorProfile) {
+      if (executiveUserId && supervisorProfile.executive_user_id !== executiveUserId) {
+        return jsonResponse({ error: "O supervisor selecionado pertence a outro executivo." }, 403);
+      }
+      executiveUserId = supervisorProfile.executive_user_id || executiveUserId;
+    }
+    if (executiveUserId && teamRoleMap[executiveUserId] !== "EXECUTIVO"
+      && !(leader.role === "EXECUTIVO" && executiveUserId === leader.user.id)) {
       return jsonResponse({ error: "A atribuição precisa apontar para contas já cadastradas no perfil correspondente." }, 400);
     }
+    if (executiveUserId && leader.role === "GERENTE" &&
+        !team.some(item => item.seller_user_id === executiveUserId && item.active)) {
+      return jsonResponse({ error: "O executivo selecionado precisa estar ativo." }, 400);
+    }
+    if (supervisorUserId && teamRoleMap[supervisorUserId] !== "SUPERVISOR") {
+      return jsonResponse({ error: "A atribuição precisa apontar para uma conta já cadastrada como supervisor." }, 400);
+    }
 
-    const invite = await createSellerAuthLink(env, email, name);
+    const invite = await createSellerAuthLink(env, email, name, memberRole);
     const inviteUrl = invite.inviteUrl;
     const userId = invite.userId;
+
     if (!invite.ok || !SELLER_ID_RE.test(userId || "") || typeof inviteUrl !== "string") {
       return jsonResponse({ error: invite.status === 422 ? "Já existe uma conta com esse e-mail." : "Não foi possível criar o convite de acesso." }, invite.status === 422 ? 409 : 502);
     }
@@ -314,7 +497,7 @@ async function leaderSellersApi(request, env, url) {
 
     const roleInsert = await serviceRequest(env, "/rest/v1/user_roles", {
       method: "POST", headers: { "content-type": "application/json", Prefer: "return=minimal" },
-      body: JSON.stringify({ user_id: userId, role: "VENDEDOR" })
+      body: JSON.stringify({ user_id: userId, role: memberRole })
     });
     const onboardingInsert = roleInsert.ok ? await serviceRequest(env, "/rest/v1/seller_onboarding", {
       method: "POST", headers: { "content-type": "application/json", Prefer: "return=minimal" },
@@ -337,15 +520,27 @@ async function leaderSellersApi(request, env, url) {
     const targetResult = await serviceRequest(env, "/rest/v1/sellers?id=eq." + id + "&select=id,slug,name,phone,active,seller_user_id,supervisor_user_id,executive_user_id");
     const target = targetResult.data?.[0];
     if (!target) return jsonResponse({ error: "Vendedor não encontrado." }, 404);
+    const targetRoles = await getSellerRoles(env, [target.seller_user_id]);
+    if (!targetRoles) return jsonResponse({ error: "Não foi possível confirmar o perfil deste integrante." }, 503);
+    const targetRole = target.seller_user_id ? targetRoles[target.seller_user_id] : "";
+    if (!targetRole || !["GERENTE", "EXECUTIVO", "SUPERVISOR", "VENDEDOR"].includes(targetRole)) {
+      return jsonResponse({ error: "O perfil deste integrante não está configurado corretamente." }, 409);
+    }
     const inScope = leader.role === "GERENTE"
       || (leader.role === "EXECUTIVO" && target.executive_user_id === leader.user.id)
-      || (leader.role === "SUPERVISOR" && target.supervisor_user_id === leader.user.id);
+      || (leader.role === "SUPERVISOR" && target.supervisor_user_id === leader.user.id && targetRole === "VENDEDOR");
     if (!inScope) return jsonResponse({ error: "Esse vendedor não pertence à sua equipe." }, 403);
 
     if (request.method === "PATCH") {
       let body;
       try { body = await request.json(); } catch { return jsonResponse({ error: "Ação inválida." }, 400); }
+      if (body.transfer && typeof body.transfer === "object") {
+        return transferTeamMember(env, leader, target, targetRole, body.transfer);
+      }
       if (typeof body.active !== "boolean") return jsonResponse({ error: "Informe o novo estado do vendedor." }, 400);
+      if (targetRole !== "VENDEDOR" && !(leader.role === "GERENTE" && ["EXECUTIVO", "SUPERVISOR"].includes(targetRole))) {
+        return jsonResponse({ error: "Seu perfil não pode alterar o acesso deste integrante." }, 403);
+      }
       if (body.active) {
         const onboarding = await serviceRequest(env, "/rest/v1/seller_onboarding?seller_id=eq." + id + "&select=email_status,whatsapp_status");
         const state = onboarding.data?.[0];
@@ -357,7 +552,7 @@ async function leaderSellersApi(request, env, url) {
         body: JSON.stringify({ active: body.active })
       });
       if (!update.ok) return jsonResponse({ error: "Não foi possível alterar o acesso do vendedor." }, 503);
-      return jsonResponse({ ok: true, active: body.active });
+      return jsonResponse({ ok: true, active: body.active, role: targetRole });
     }
 
     if (!readiness.ready) return jsonResponse({ error: "O envio automático de e-mail ainda não está configurado.", readiness }, 503);
@@ -385,7 +580,7 @@ async function leaderSellersApi(request, env, url) {
 }
 
 async function deliverSellerOnboarding(env, seller) {
-  const qrUrl = QR_PRODUCTION_ORIGIN + "/?vendedor=" + encodeURIComponent(seller.id);
+  const qrUrl = env.WALLET_PUBLIC_ORIGIN + "/?vendedor=" + encodeURIComponent(seller.id);
   const emailStatus = seller.retry ? seller.onboarding.email_status : "pending";
   let emailResult = { ok: emailStatus === "sent", status: 200 };
   if (emailStatus !== "sent") {
@@ -436,13 +631,6 @@ function buildWhatsappInviteUrl(phone, name, qrUrl) {
   return "https://wa.me/" + recipient + "?text=" + encodeURIComponent(message);
 }
 
-async function routeLeaderSellers(request, env, url) {
-  if (url.pathname === "/api/sellers" || url.pathname.startsWith("/api/sellers/")) {
-    return leaderSellersApi(request, env, url);
-  }
-  return null;
-}
-
 function html(body) {
   return new Response(body, {
     headers: {
@@ -451,7 +639,7 @@ function html(body) {
   });
 }
 
-function page() {
+function page(config, publicOrigin) {
   return html(`<!doctype html>
 <html lang="pt-BR">
 <head>
@@ -465,17 +653,21 @@ function page() {
 <style>
 *{box-sizing:border-box}
 
+html{color-scheme:light}
+
 body{
   margin:0;
-  background:#f5f5f5;
-  font-family:Arial,sans-serif;
-  color:#222
+  background:#f3f4f6;
+  font-family:Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;
+  color:#17191d;
+  line-height:1.5
 }
 
 .top{
-  background:#d50000;
+  background:linear-gradient(110deg,#c9000b,#ed1b2f);
   color:#fff;
-  padding:18px 20px
+  padding:18px max(20px,calc((100vw - 1440px)/2));
+  box-shadow:0 4px 18px rgba(103,0,7,.18)
 }
 
 .brand{
@@ -489,16 +681,17 @@ body{
 }
 
 .wrap{
-  max-width:1180px;
+  max-width:1480px;
   margin:24px auto;
-  padding:0 16px
+  padding:0 22px
 }
 
 .card{
   background:#fff;
-  border-radius:14px;
-  padding:20px;
-  box-shadow:0 2px 12px rgba(0,0,0,.08);
+  border:1px solid #e6e8ec;
+  border-radius:18px;
+  padding:22px;
+  box-shadow:0 8px 28px rgba(25,31,42,.06);
   margin-bottom:18px
 }
 
@@ -512,9 +705,10 @@ body{
 }
 
 .h{
-  font-size:22px;
+  font-size:24px;
   font-weight:800;
-  margin:0 0 14px
+  margin:0 0 14px;
+  letter-spacing:-.025em
 }
 
 .muted{
@@ -536,24 +730,40 @@ body{
 .field input,
 .field select{
   width:100%;
-  padding:12px;
-  border:1px solid #ccc;
-  border-radius:9px;
-  font-size:15px
+  min-height:48px;
+  padding:12px 14px;
+  border:1px solid #cfd2d8;
+  border-radius:11px;
+  font-size:15px;
+  background:#fff;
+  transition:border-color .15s,box-shadow .15s
+}
+
+.field input:focus,.field select:focus,.filters input:focus,.filters select:focus{
+  outline:none;border-color:#d50000;box-shadow:0 0 0 4px rgba(213,0,0,.11)
 }
 
 .btn{
   border:0;
-  border-radius:9px;
-  padding:12px 16px;
+  border-radius:11px;
+  padding:12px 17px;
   background:#d50000;
   color:#fff;
   font-weight:800;
-  cursor:pointer
+  cursor:pointer;
+  transition:transform .15s,background .15s,box-shadow .15s
 }
+
+.btn:hover:not(:disabled){background:#b90000;box-shadow:0 6px 14px rgba(213,0,0,.16)}
+.btn:focus-visible,.link-button:focus-visible{outline:3px solid #25282e;outline-offset:3px}
 
 .btn.secondary{
   background:#333
+}
+
+.btn:disabled{
+  background:#666;
+  cursor:not-allowed
 }
 
 .error{
@@ -587,10 +797,10 @@ body{
 }
 
 .stat{
-  background:#fafafa;
-  border:1px solid #eee;
-  border-radius:10px;
-  padding:14px
+  background:linear-gradient(145deg,#fff,#f8f9fb);
+  border:1px solid #e6e8ec;
+  border-radius:14px;
+  padding:17px
 }
 
 .stat b{
@@ -616,11 +826,40 @@ body{
 
 .filters input,
 .filters select{
-  padding:12px;
-  border:1px solid #ccc;
-  border-radius:9px;
-  font-size:14px
+  min-height:48px;
+  padding:12px 14px;
+  border:1px solid #cfd2d8;
+  border-radius:11px;
+  font-size:14px;
+  background:#fff
 }
+
+.team-actions,.transfer-controls{
+  display:flex;
+  align-items:center;
+  gap:7px;
+  flex-wrap:wrap
+}
+
+.transfer-controls select{
+  min-height:42px;
+  max-width:240px;
+  padding:8px 10px;
+  border:1px solid #cfd2d8;
+  border-radius:9px;
+  background:#fff
+}
+
+.move-team-option{
+  display:inline-flex;
+  align-items:center;
+  gap:6px;
+  color:#444;
+  font-size:13px;
+  white-space:nowrap
+}
+
+.move-team-option input{accent-color:#d50000}
 
 .table-wrap{
   overflow:auto;
@@ -634,8 +873,8 @@ table{
 }
 
 th,td{
-  padding:11px 9px;
-  border-bottom:1px solid #eee;
+  padding:13px 11px;
+  border-bottom:1px solid #e9ebef;
   text-align:left;
   font-size:13px;
   vertical-align:top
@@ -643,7 +882,9 @@ th,td{
 
 th{
   font-size:12px;
-  background:#fafafa;
+  background:#f7f8fa;
+  color:#434852;
+  font-weight:750;
   position:sticky;
   top:0
 }
@@ -652,7 +893,8 @@ th{
   display:inline-block;
   padding:5px 8px;
   border-radius:20px;
-  background:#eee;
+  background:#f0f1f3;
+  color:#292c32;
   font-size:11px;
   font-weight:700
 }
@@ -710,12 +952,17 @@ th{
   }
 
   .wrap{
-    padding:0 10px
+    padding:0 12px
   }
 
   .card{
-    padding:14px
+    padding:16px;
+    border-radius:15px
   }
+
+  .top{padding:16px 18px}
+  .wrap{margin:16px auto}
+  .table-wrap{border:1px solid #e8eaee;border-radius:12px}
 }
 </style>
 </head>
@@ -867,22 +1114,27 @@ th{
   </section>
 
   <section id="sellerManagementPanel" class="card hidden" style="margin-top:18px">
-    <h2 class="h">Equipe de vendedores</h2>
+    <h2 class="h">Equipe</h2>
     <p class="muted">O convite e o QR Code são enviados automaticamente por e-mail. O botão do WhatsApp abre uma mensagem pronta para envio manual, sem cobrança da Meta.</p>
     <p id="sellerSetupStatus" class="muted" role="status" aria-live="polite"></p>
     <form id="sellerForm" class="filters" style="grid-template-columns:repeat(auto-fit,minmax(190px,1fr));margin:14px 0">
-      <input id="sellerName" placeholder="Nome do vendedor" required maxlength="120">
+      <select id="sellerRole" aria-label="Perfil da equipe">
+        <option value="VENDEDOR">Vendedor</option>
+        <option value="SUPERVISOR">Supervisor</option>
+        <option value="EXECUTIVO">Executivo / Coordenador</option>
+      </select>
+      <input id="sellerName" placeholder="Nome completo" required maxlength="120">
       <input id="sellerEmail" type="email" placeholder="E-mail" required maxlength="254">
-      <input id="sellerPhone" type="tel" placeholder="WhatsApp com DDD" required>
+      <input id="sellerPhone" type="tel" placeholder="WhatsApp com DDD (obrigatório)" aria-label="WhatsApp com DDD (obrigatório)" required>
       <input id="sellerRegion" placeholder="Região" value="Santos" required maxlength="80">
       <select id="sellerExecutive" class="hidden"><option value="">Selecione o executivo</option></select>
       <select id="sellerSupervisor" class="hidden"><option value="">Selecione o supervisor</option></select>
-      <button id="sellerCreateBtn" class="btn" type="submit">Cadastrar vendedor</button>
+      <button id="sellerCreateBtn" class="btn" type="submit" aria-describedby="sellerSetupStatus" disabled>Cadastrar vendedor</button>
     </form>
     <div id="sellerManagementStatus" class="muted" role="status" aria-live="polite"></div>
     <div style="overflow:auto;margin-top:12px">
       <table style="width:100%;border-collapse:collapse">
-        <thead><tr><th>Vendedor</th><th>Região</th><th>Estado</th><th>Envios</th><th>Ação</th></tr></thead>
+        <thead><tr><th>Integrante</th><th>Perfil</th><th>Região</th><th>Estado</th><th>Envios</th><th>Ação</th></tr></thead>
         <tbody id="sellerManagementRows"></tbody>
       </table>
     </div>
@@ -992,6 +1244,17 @@ th{
 </div>
 
 
+<dialog id="observationDialog" aria-labelledby="observationTitle">
+  <form id="observationForm">
+    <h2 id="observationTitle">Editar observação</h2>
+    <label for="observationInput">Observação (até 2.000 caracteres)</label>
+    <textarea id="observationInput" rows="5" autofocus></textarea>
+    <p id="observationError" role="alert"></p>
+    <button type="button" id="cancelObservation">Cancelar</button>
+    <button type="submit" id="saveObservation">Salvar</button>
+  </form>
+</dialog>
+
 <script>
 
 // Keep the recovery panel usable even if the external SDK fails to load.
@@ -1009,18 +1272,26 @@ const {
   createClient
 } = supabase;
 
+// Capture the callback before the SDK consumes and clears its fragment.
+const passwordLinkType = new URLSearchParams(window.location.hash.slice(1)).get("type");
+let passwordSetupPending = ["invite", "recovery"].includes(passwordLinkType);
 
 const client = createClient(
-  ${JSON.stringify(SUPABASE_URL)},
-  ${JSON.stringify(SUPABASE_PUBLISHABLE_KEY)}
+  ${JSON.stringify(config.url)},
+  ${JSON.stringify(config.key)}
 );
 
 
 let leads = [];
 let isManager = false;
+let editingObservation = null;
 let leaderRole = "";
 let sellerTeamData = null;
-const QR_PRODUCTION_ORIGIN = "https://maquina-de-lider.juliano-misael.workers.dev";
+let sellerAccessGuardUserId = "";
+let sellerAccessGuardBusy = false;
+let sellerAccessVisibilityHandler = null;
+let sellerAccessFocusHandler = null;
+const QR_PRODUCTION_ORIGIN = ${JSON.stringify(publicOrigin)};
 
 
 const $ = id =>
@@ -1168,11 +1439,14 @@ async function loadLeads() {
       const fieldsByLead = new Map(
         (privateFields || []).map(fields => [fields.lead_id, fields])
       );
-      leads = leads.map(lead => ({
-        ...lead,
-        observation: fieldsByLead.get(lead.id)?.observation ?? "",
-        crm_external_id: fieldsByLead.get(lead.id)?.crm_external_id ?? ""
-      }));
+      leads = leads.map(lead => {
+        const fields = fieldsByLead.get(lead.id);
+        return fields ? {
+          ...lead,
+          observation: fields.observation,
+          crm_external_id: fields.crm_external_id
+        } : lead;
+      });
     }
   }
 
@@ -1330,7 +1604,9 @@ function render() {
         "</td>" +
 
         (isManager ?
-          "<td>" + escapeHtml(lead.observation) + "</td>" +
+          "<td>" + escapeHtml(lead.observation) +
+          (lead.observation !== undefined ? '<br><button type="button" data-observation-lead="' +
+            escapeHtml(lead.id) + '">Editar observação</button>' : "") + "</td>" +
           "<td>" + escapeHtml(lead.crm_external_id) + "</td>" : "") +
 
       "</tr>"
@@ -1338,6 +1614,72 @@ function render() {
 
 }
 
+
+$("rows").addEventListener("click", event => {
+  const button = event.target.closest("[data-observation-lead]");
+  if (!isManager || !button) return;
+  const lead = leads.find(item =>
+    item.id === button.dataset.observationLead && item.observation !== undefined
+  );
+  if (!lead) return;
+
+  editingObservation = lead;
+  $("observationInput").value = lead.observation ?? "";
+  $("observationError").textContent = "";
+  $("observationDialog").showModal();
+});
+
+$("cancelObservation").onclick = () => $("observationDialog").close();
+$("observationDialog").addEventListener("cancel", event => {
+  if ($("saveObservation").disabled) event.preventDefault();
+});
+$("observationDialog").addEventListener("close", () => {
+  $("observationInput").value = "";
+  editingObservation = null;
+});
+
+$("observationForm").addEventListener("submit", async event => {
+  event.preventDefault();
+  const lead = editingObservation;
+  const save = $("saveObservation");
+  if (!isManager || !lead || save.disabled) return;
+
+  const input = $("observationInput");
+  const observation = input.value.trim() || null;
+  const errorMessage = $("observationError");
+  if (observation && Array.from(observation).length > 2000) {
+    errorMessage.textContent = "Use até 2.000 caracteres.";
+    return;
+  }
+
+  errorMessage.textContent = "";
+  save.disabled = $("cancelObservation").disabled = input.disabled = true;
+  try {
+    const { data, error } = await client.rpc("manager_update_lead_observation", {
+      p_lead_id: lead.id,
+      p_expected_observation: lead.observation,
+      p_observation: observation
+    });
+    if (error?.code === "PT409") {
+      $("observationDialog").close();
+      await loadLeads();
+      $("managerMessage").textContent = "A observação mudou. Confira o valor atual antes de editar novamente.";
+      return;
+    }
+    if (error) throw error;
+
+    lead.observation = data;
+    $("observationDialog").close();
+    render();
+    $("managerMessage").textContent = "Observação salva.";
+  } catch (error) {
+    errorMessage.textContent = error.code === "42501"
+      ? "Seu perfil não tem permissão para editar observações."
+      : "Não foi possível salvar a observação. Tente novamente.";
+  } finally {
+    save.disabled = $("cancelObservation").disabled = input.disabled = false;
+  }
+});
 
 async function login() {
 
@@ -1374,6 +1716,8 @@ async function login() {
 
 
 function showPasswordPanel() {
+  passwordSetupPending = true;
+  $("app").classList.add("hidden");
   $("login").classList.remove("hidden");
   $("loginForm").classList.add("hidden");
   $("resetPanel").classList.add("hidden");
@@ -1453,18 +1797,107 @@ async function savePassword() {
     return;
   }
 
+  passwordSetupPending = false;
   window.history.replaceState({}, document.title, window.location.pathname);
   await showApp();
 }
 
 
+function clearSellerWalletData() {
+  leads = [];
+  $("total").textContent = "0";
+  $("novos").textContent = "0";
+  $("propostas").textContent = "0";
+  $("vendas").textContent = "0";
+  $("rows").replaceChildren();
+}
+
+function stopSellerAccessGuard() {
+  if (sellerAccessVisibilityHandler) {
+    document.removeEventListener("visibilitychange", sellerAccessVisibilityHandler);
+  }
+  if (sellerAccessFocusHandler) {
+    window.removeEventListener("focus", sellerAccessFocusHandler);
+  }
+  sellerAccessVisibilityHandler = null;
+  sellerAccessFocusHandler = null;
+  sellerAccessGuardUserId = "";
+}
+
+async function verifySellerAccessOnResume() {
+  const expectedUserId = sellerAccessGuardUserId;
+  if (!expectedUserId || sellerAccessGuardBusy || document.visibilityState === "hidden") return;
+
+  sellerAccessGuardBusy = true;
+  try {
+    const { data: userData, error: userError } = await client.auth.getUser();
+    if (userError) throw userError;
+    if (userData?.user?.id !== expectedUserId) {
+      stopSellerAccessGuard();
+      return;
+    }
+
+    const { data: activeSeller, error: sellerAccessError } = await client
+      .from("sellers")
+      .select("id")
+      .eq("seller_user_id", expectedUserId)
+      .eq("active", true)
+      .maybeSingle();
+
+    if (sellerAccessError) throw sellerAccessError;
+    if (!activeSeller) {
+      stopSellerAccessGuard();
+      clearSellerWalletData();
+      $("app").classList.add("hidden");
+      $("login").classList.remove("hidden");
+      $("loginForm").classList.remove("hidden");
+      $("loginError").textContent = "Seu acesso à carteira está desativado. Fale com seu gerente para reativá-lo.";
+      const { error: signOutError } = await client.auth.signOut();
+      if (signOutError) console.error(signOutError);
+      return;
+    }
+
+    await loadLeads();
+  } catch (error) {
+    clearSellerWalletData();
+    $("message").textContent = "Não foi possível confirmar seu acesso. Atualize a página para tentar novamente.";
+    console.error(error);
+  } finally {
+    sellerAccessGuardBusy = false;
+  }
+}
+
+function startSellerAccessGuard(userId) {
+  stopSellerAccessGuard();
+  sellerAccessGuardUserId = userId;
+  sellerAccessVisibilityHandler = () => {
+    if (document.visibilityState === "hidden") {
+      clearSellerWalletData();
+      return;
+    }
+    void verifySellerAccessOnResume();
+  };
+  sellerAccessFocusHandler = () => void verifySellerAccessOnResume();
+  document.addEventListener("visibilitychange", sellerAccessVisibilityHandler);
+  window.addEventListener("focus", sellerAccessFocusHandler);
+}
+
 async function showApp() {
+  if (passwordSetupPending) return;
 
   let user;
   try {
     const { data, error } = await client.auth.getUser();
     if (error) throw error;
     user = data?.user;
+    if (user) {
+      const { data: ready, error: readinessError } = await client.rpc("wallet_password_ready");
+      if (readinessError) throw readinessError;
+      if (ready !== true) {
+        showPasswordPanel();
+        return;
+      }
+    }
   } catch (error) {
     $("loginError").textContent =
       "Não foi possível confirmar sua sessão. Verifique sua conexão e tente novamente.";
@@ -1487,10 +1920,39 @@ async function showApp() {
     .eq("user_id", user.id);
 
   if (rolesError) {
+    $("loginError").textContent = "Não foi possível confirmar seu perfil. Tente novamente.";
     console.error(rolesError);
+    return;
+  }
+
+  const roleRows = roles || [];
+  isManager = roleRows.some(role => role.role === "GERENTE");
+  leaderRole = roleRows.map(role => role.role).find(role => ["GERENTE", "EXECUTIVO", "SUPERVISOR"].includes(role)) || "";
+
+  if (roleRows.some(role => role.role === "VENDEDOR") || (!isManager && ["EXECUTIVO", "SUPERVISOR"].includes(leaderRole))) {
+    const { data: activeSeller, error: sellerAccessError } = await client
+      .from("sellers")
+      .select("id")
+      .eq("seller_user_id", user.id)
+      .eq("active", true)
+      .maybeSingle();
+
+    if (sellerAccessError || !activeSeller) {
+      stopSellerAccessGuard();
+      clearSellerWalletData();
+      await client.auth.signOut();
+      $("app").classList.add("hidden");
+      $("login").classList.remove("hidden");
+      $("loginForm").classList.remove("hidden");
+      $("loginError").textContent = sellerAccessError
+        ? "Não foi possível confirmar se seu acesso está ativo. Tente novamente."
+        : "Seu acesso à carteira está desativado. Fale com seu gerente para reativá-lo.";
+      if (sellerAccessError) console.error(sellerAccessError);
+      return;
+    }
+    startSellerAccessGuard(user.id);
   } else {
-    isManager = (roles || []).some(role => role.role === "GERENTE");
-    leaderRole = (roles || []).map(role => role.role).find(role => ["GERENTE", "EXECUTIVO", "SUPERVISOR"].includes(role)) || "";
+    stopSellerAccessGuard();
   }
 
   $("managerObservationHeader").classList.toggle("hidden", !isManager);
@@ -1507,10 +1969,8 @@ async function showApp() {
 
   await loadLeads();
 
-  if (isManager) {
-    await loadManagerQrSellers();
-  }
   if (leaderRole) await loadSellerManagement();
+  if (isManager) await loadManagerQrSellers();
 
   $("login").classList.add("hidden");
   $("app").classList.remove("hidden");
@@ -1534,6 +1994,7 @@ function buildWhatsappInviteUrl(phone, name, qrUrl) {
 async function loadSellerManagement() {
   const status = $("sellerSetupStatus");
   const rows = $("sellerManagementRows");
+  $("sellerCreateBtn").disabled = true;
   status.textContent = "Carregando equipe…";
   try {
     const headers = await sellerApiHeaders();
@@ -1545,15 +2006,20 @@ async function loadSellerManagement() {
       ? "E-mail automático pronto. O WhatsApp será enviado manualmente, sem custo da Meta."
       : "Envio automático de e-mail ainda não configurado. Novos cadastros ficam indisponíveis até configurá-lo.";
     $("sellerCreateBtn").disabled = !payload.readiness?.ready;
+    const roleSelect = $("sellerRole");
+    const roleOptions = payload.role === "GERENTE"
+      ? [["VENDEDOR", "Vendedor"], ["SUPERVISOR", "Supervisor"], ["EXECUTIVO", "Executivo / Coordenador"]]
+      : payload.role === "EXECUTIVO"
+        ? [["VENDEDOR", "Vendedor"], ["SUPERVISOR", "Supervisor"]]
+        : [["VENDEDOR", "Vendedor"]];
+    roleSelect.replaceChildren(...roleOptions.map(([value, label]) => new Option(label, value)));
     const execSelect = $("sellerExecutive");
     const supSelect = $("sellerSupervisor");
-    execSelect.classList.toggle("hidden", payload.role !== "GERENTE" && payload.role !== "SUPERVISOR");
-    supSelect.classList.toggle("hidden", payload.role === "SUPERVISOR");
-    for (const [select, choices, label] of [[execSelect, payload.assignableExecutives, "Selecione o executivo"], [supSelect, payload.assignableSupervisors, "Selecione o supervisor"]]) {
+    for (const [select, choices, label] of [[execSelect, payload.assignableExecutives, "Sem executivo vinculado"], [supSelect, payload.assignableSupervisors, "Sem supervisor vinculado"]]) {
       select.replaceChildren(new Option(label, ""));
       (choices || []).forEach(choice => select.add(new Option(choice.label, choice.id)));
-      if (!choices?.length) select.classList.add("hidden");
     }
+    updateSellerAssignmentFields();
     rows.replaceChildren();
     (payload.sellers || []).forEach(seller => {
       const tr = document.createElement("tr");
@@ -1564,14 +2030,18 @@ async function loadSellerManagement() {
         ? "E-mail: " + emailLabel + " · WhatsApp: " + (emailStatus === "sent" ? "manual (sem custo)" : "após confirmar o e-mail")
         : "Sem controle de envio";
       const name = document.createElement("td"); name.textContent = seller.name;
+      const role = document.createElement("td"); role.textContent = seller.role === "EXECUTIVO" ? "Executivo / Coordenador" : seller.role === "SUPERVISOR" ? "Supervisor" : "Vendedor";
       const region = document.createElement("td"); region.textContent = seller.region || "—";
       const active = document.createElement("td"); active.textContent = state;
       const sends = document.createElement("td"); sends.textContent = delivery;
       const actionCell = document.createElement("td");
-      const action = document.createElement("button"); action.type = "button"; action.className = "btn secondary";
-      action.textContent = seller.active ? "Desligar" : "Reativar";
-      action.addEventListener("click", () => setSellerActive(seller, !seller.active));
-      actionCell.append(action);
+      actionCell.className = "team-actions";
+      if (seller.role === "VENDEDOR" || (payload.role === "GERENTE" && ["EXECUTIVO", "SUPERVISOR"].includes(seller.role))) {
+        const action = document.createElement("button"); action.type = "button"; action.className = "btn secondary";
+        action.textContent = seller.active ? "Desligar" : "Reativar";
+        action.addEventListener("click", () => setSellerActive(seller, !seller.active));
+        actionCell.append(action);
+      }
       if (seller.onboarding && seller.onboarding.email_status !== "sent") {
         const retry = document.createElement("button"); retry.type = "button"; retry.className = "btn secondary"; retry.style.marginLeft = "6px"; retry.textContent = "Reenviar e-mail";
         retry.addEventListener("click", () => retrySellerDelivery(seller)); actionCell.append(retry);
@@ -1582,61 +2052,158 @@ async function loadSellerManagement() {
         whatsapp.textContent = "Abrir WhatsApp"; whatsapp.href = buildWhatsappInviteUrl(seller.phone, seller.name, qrUrl.href);
         whatsapp.target = "_blank"; whatsapp.rel = "noopener noreferrer"; actionCell.append(whatsapp);
       }
-      tr.append(name, region, active, sends, actionCell); rows.append(tr);
+      if (seller.role === "SUPERVISOR" && payload.role === "GERENTE" || seller.role === "VENDEDOR") {
+        appendTransferControls(actionCell, seller, payload);
+      }
+      tr.append(name, role, region, active, sends, actionCell); rows.append(tr);
     });
   } catch (error) {
     status.textContent = error.message;
   }
 }
 
+function updateSellerAssignmentFields() {
+  if (!sellerTeamData) return;
+  const role = $("sellerRole").value;
+  const showExecutive = sellerTeamData.role === "GERENTE" && role !== "EXECUTIVO";
+  const showSupervisor = role === "VENDEDOR" && sellerTeamData.role !== "SUPERVISOR";
+  $("sellerExecutive").classList.toggle("hidden", !showExecutive || !sellerTeamData.assignableExecutives?.length);
+  $("sellerSupervisor").classList.toggle("hidden", !showSupervisor || !sellerTeamData.assignableSupervisors?.length);
+  $("sellerExecutive").required = showExecutive && sellerTeamData.assignableExecutives?.length > 0 && role === "SUPERVISOR";
+}
+
+$("sellerRole").addEventListener("change", updateSellerAssignmentFields);
+
+function appendTransferControls(actionCell, seller, payload) {
+  const group = document.createElement("span"); group.className = "transfer-controls";
+  const select = document.createElement("select"); select.setAttribute("aria-label", "Transferir " + seller.name + " para");
+  const add = (label, value, selected = false) => {
+    const option = new Option(label, value); option.selected = selected; select.add(option);
+  };
+  add("Transferir para…", "");
+  if (seller.role === "SUPERVISOR") {
+    add("Sem executivo", "manager");
+    (payload.assignableExecutives || []).forEach(item => add("Executivo: " + item.label, "executive:" + item.id));
+  } else if (payload.role === "GERENTE") {
+    add("Carteira do gerente", "manager");
+    (payload.assignableExecutives || []).forEach(item => add("Executivo: " + item.label, "executive:" + item.id));
+    (payload.assignableSupervisors || []).forEach(item => add("Supervisor: " + item.label, "supervisor:" + item.id));
+  } else if (payload.role === "EXECUTIVO") {
+    add("Direto nesta equipe", "executive:" + payload.currentExecutiveUserId);
+    (payload.assignableSupervisors || []).forEach(item => add("Supervisor: " + item.label, "supervisor:" + item.id));
+  } else if (payload.role === "SUPERVISOR" && payload.currentExecutiveUserId) {
+    add("Carteira do executivo", "executive:" + payload.currentExecutiveUserId);
+  }
+  const moveTeam = document.createElement("input");
+  moveTeam.type = "checkbox"; moveTeam.checked = true;
+  const moveTeamLabel = document.createElement("label");
+  moveTeamLabel.className = "move-team-option";
+  moveTeamLabel.append(moveTeam, document.createTextNode("Levar vendedores da equipe"));
+  if (seller.role === "SUPERVISOR") group.append(select, moveTeamLabel);
+  else group.append(select);
+  const transfer = document.createElement("button"); transfer.type = "button"; transfer.className = "btn secondary";
+  transfer.textContent = "Transferir";
+  transfer.addEventListener("click", () => submitSellerTransfer(seller, select, moveTeam));
+  group.append(transfer);
+  actionCell.append(group);
+}
+
+async function submitSellerTransfer(seller, select, moveTeam) {
+  const selected = select.value;
+  if (!selected) {
+    $("sellerManagementStatus").textContent = "Selecione o destino da transferência.";
+    return;
+  }
+  let transfer = { executiveUserId: null, supervisorUserId: null, moveTeam: moveTeam.checked };
+  if (selected.startsWith("executive:")) transfer.executiveUserId = selected.slice("executive:".length) || null;
+  else if (selected.startsWith("supervisor:")) transfer.supervisorUserId = selected.slice("supervisor:".length);
+  else if (selected !== "manager") return;
+
+  const message = seller.role === "SUPERVISOR"
+    ? moveTeam.checked
+      ? "O supervisor e seus vendedores serão transferidos para o executivo escolhido. Os leads continuarão nas carteiras dos mesmos vendedores. Continuar?"
+      : "O supervisor será transferido sem levar os vendedores. Eles permanecerão com o executivo atual e deixarão de pertencer a este supervisor. Continuar?"
+    : "A transferência muda quais supervisores e executivos podem acessar os leads de " + seller.name + ". Os leads permanecem na carteira do vendedor. Continuar?";
+  if (!window.confirm(message)) return;
+
+  const status = $("sellerManagementStatus"); status.textContent = "Transferindo…";
+  const button = select.parentElement.querySelector("button"); button.disabled = true;
+  try {
+    const headers = await sellerApiHeaders();
+    const response = await fetch("/api/sellers/" + encodeURIComponent(seller.id), {
+      method: "PATCH", headers, body: JSON.stringify({ transfer })
+    });
+    const result = await response.json(); if (!response.ok) throw new Error(result.error || "Não foi possível transferir.");
+    status.textContent = seller.role === "SUPERVISOR" && !transfer.moveTeam
+      ? "Supervisor transferido. Os vendedores permaneceram com o executivo anterior."
+      : "Transferência concluída. Os leads continuam nas carteiras dos mesmos vendedores.";
+    await loadLeads();
+    await loadSellerManagement();
+    if (isManager) await loadManagerQrSellers();
+  } catch (error) {
+    status.textContent = error.message;
+    button.disabled = false;
+  }
+}
+
 async function setSellerActive(seller, active) {
+  if (!active && seller.role === "EXECUTIVO" &&
+      !window.confirm("Desativar este executivo suspende o acesso dele e dos supervisores da equipe aos dados da equipe. As contas dos vendedores e seus leads permanecem ativos. Continuar?")) return;
+  if (!active && seller.role === "SUPERVISOR" &&
+      !window.confirm("Desativar este supervisor bloqueia o acesso dele à equipe. Os vendedores e seus leads permanecem ativos; o executivo responsável mantém o acesso. Continuar?")) return;
   const status = $("sellerManagementStatus"); status.textContent = "Salvando…";
   try {
     const headers = await sellerApiHeaders();
     const response = await fetch("/api/sellers/" + encodeURIComponent(seller.id), { method: "PATCH", headers, body: JSON.stringify({ active }) });
     const result = await response.json(); if (!response.ok) throw new Error(result.error || "Não foi possível alterar o acesso.");
-    status.textContent = active ? "Vendedor reativado." : "Vendedor desligado; o acesso foi bloqueado.";
+    status.textContent = active
+      ? (seller.role === "VENDEDOR" ? "Vendedor reativado." : "Gestor reativado.")
+      : (seller.role === "VENDEDOR" ? "Vendedor desligado; o acesso foi bloqueado." : "Gestor desligado; o acesso dele e da equipe ficou suspenso.");
     await loadSellerManagement();
   } catch (error) { status.textContent = error.message; }
 }
 
-function qrPngDataUrl(qr, cellSize = 8, margin = 4) {
-  const gifDataUrl = qr.createDataURL(cellSize, margin);
-  return new Promise((resolve, reject) => {
-    const image = new Image();
-    image.onload = () => {
-      const canvas = document.createElement("canvas");
-      canvas.width = image.naturalWidth;
-      canvas.height = image.naturalHeight;
-      const context = canvas.getContext("2d");
-      if (!context || !canvas.width || !canvas.height) {
-        reject(new Error("Não foi possível preparar a imagem do QR Code."));
-        return;
+function sellerQrPng(url) {
+  const qr = qrcode(0, "M");
+  qr.addData(url);
+  qr.make();
+  const canvas = document.createElement("canvas");
+  const modules = qr.getModuleCount();
+  const cell = 8;
+  const quietZone = 4;
+  canvas.width = canvas.height = (modules + quietZone * 2) * cell;
+  const context = canvas.getContext("2d");
+  context.fillStyle = "#fff";
+  context.fillRect(0, 0, canvas.width, canvas.height);
+  context.fillStyle = "#000";
+  for (let row = 0; row < modules; row++) {
+    for (let column = 0; column < modules; column++) {
+      if (qr.isDark(row, column)) {
+        context.fillRect((column + quietZone) * cell, (row + quietZone) * cell, cell, cell);
       }
-      context.fillStyle = "#fff";
-      context.fillRect(0, 0, canvas.width, canvas.height);
-      context.drawImage(image, 0, 0);
-      try { resolve(canvas.toDataURL("image/png")); }
-      catch { reject(new Error("Não foi possível preparar a imagem do QR Code.")); }
-    };
-    image.onerror = () => reject(new Error("Não foi possível preparar a imagem do QR Code."));
-    image.src = gifDataUrl;
-  });
+    }
+  }
+  return canvas.toDataURL("image/png");
+
 }
 
 async function createSeller(event) {
   event.preventDefault();
   const button = $("sellerCreateBtn"); const status = $("sellerManagementStatus");
+  if (!sellerTeamData?.readiness?.ready) {
+    status.textContent = "Cadastro indisponível até o envio de e-mail ser configurado.";
+    return;
+  }
   if (typeof window.qrcode !== "function") { status.textContent = "Gerador de QR indisponível. Atualize a página."; return; }
   button.disabled = true; button.textContent = "Criando e enviando e-mail…"; status.textContent = "";
   try {
     const id = crypto.randomUUID();
     const canonical = new URL("/", QR_PRODUCTION_ORIGIN); canonical.searchParams.set("vendedor", id);
-    const qr = qrcode(0, "M"); qr.addData(canonical.href); qr.make();
-    const qrPng = await qrPngDataUrl(qr, 8, 4);
+    const qrPng = sellerQrPng(canonical.href);
+
     const headers = await sellerApiHeaders();
     const response = await fetch("/api/sellers", { method: "POST", headers, body: JSON.stringify({
-      sellerId: id, name: $("sellerName").value.trim(), email: $("sellerEmail").value.trim(),
+      sellerId: id, memberRole: $("sellerRole").value, name: $("sellerName").value.trim(), email: $("sellerEmail").value.trim(),
       phone: $("sellerPhone").value.trim(), region: $("sellerRegion").value.trim(),
       executiveUserId: $("sellerExecutive").value || null, supervisorUserId: $("sellerSupervisor").value || null,
       qrPng
@@ -1654,9 +2221,9 @@ async function retrySellerDelivery(seller) {
   const status = $("sellerManagementStatus"); status.textContent = "Reenviando convite por e-mail…";
   try {
     const canonical = new URL("/", QR_PRODUCTION_ORIGIN); canonical.searchParams.set("vendedor", seller.id);
-    const qr = qrcode(0, "M"); qr.addData(canonical.href); qr.make();
     const headers = await sellerApiHeaders();
-    const response = await fetch("/api/sellers/" + encodeURIComponent(seller.id) + "/retry", { method: "POST", headers, body: JSON.stringify({ qrPng: await qrPngDataUrl(qr, 8, 4) }) });
+    const response = await fetch("/api/sellers/" + encodeURIComponent(seller.id) + "/retry", { method: "POST", headers, body: JSON.stringify({ qrPng: sellerQrPng(canonical.href) }) });
+
     const result = await response.json(); if (!response.ok) throw new Error(result.error || "Não foi possível reenviar.");
     status.textContent = result.message || "Reenvio processado."; await loadSellerManagement();
   } catch (error) { status.textContent = error.message; }
@@ -1669,19 +2236,14 @@ let qrSellers = [];
 
 async function loadManagerQrSellers() {
   $("qrStatus").textContent = "Carregando vendedores ativos…";
-  const { data, error } = await client
-    .from("sellers")
-    .select("id,slug,name,active")
-    .eq("active", true)
-    .order("name");
-
-  if (error) {
+  if (!sellerTeamData?.sellers) {
     $("qrStatus").textContent = "Não foi possível carregar os vendedores para gerar os QR Codes.";
-    console.error(error);
     return;
   }
 
-  qrSellers = data || [];
+  qrSellers = sellerTeamData.sellers
+    .filter(item => item.active && item.role === "VENDEDOR")
+    .map(({ id, slug, name, active }) => ({ id, slug, name, active }));
   $("qrStatus").textContent = qrSellers.length
     ? qrSellers.length + " vendedor(es) ativo(s). Os links não mudam se o nome do vendedor for atualizado."
     : "Nenhum vendedor ativo encontrado.";
@@ -1806,6 +2368,10 @@ client.auth.onAuthStateChange((event) => {
   if (event === "PASSWORD_RECOVERY") {
     showPasswordPanel();
   }
+  if (event === "SIGNED_OUT") {
+    stopSellerAccessGuard();
+    clearSellerWalletData();
+  }
 });
 
 
@@ -1847,6 +2413,8 @@ $("logoutBtn")
       button.textContent = "Saindo...";
 
       try {
+        stopSellerAccessGuard();
+        clearSellerWalletData();
         const { error } = await client.auth.signOut();
         if (error) throw error;
 
@@ -1866,12 +2434,15 @@ $("logoutBtn")
 
 (async () => {
   try {
-    const recovery = new URLSearchParams(window.location.hash.slice(1)).get("type") === "recovery";
     const { data, error } = await client.auth.getSession();
     if (error) throw error;
 
-    if (recovery) {
+    if (passwordSetupPending && data.session) {
       showPasswordPanel();
+    } else if (passwordSetupPending) {
+      passwordSetupPending = false;
+      $("login").classList.remove("hidden");
+      $("loginError").textContent = "Link inválido ou expirado. Solicite um novo link de primeiro acesso.";
     } else if (data.session) {
       await showApp();
       if ($("app").classList.contains("hidden")) {
@@ -1906,17 +2477,23 @@ export default {
     const url =
       new URL(request.url);
 
-    const apiResponse = await routeLeaderSellers(request, env, url);
-    if (apiResponse) return apiResponse;
-
-
-    if (
-      url.pathname === "/carteira" ||
-      url.pathname === "/carteira/"
-    ) {
-
-      return page();
-
+    const isWallet = url.pathname === "/carteira" || url.pathname === "/carteira/";
+    const isSellerApi = url.pathname === "/api/sellers" || url.pathname.startsWith("/api/sellers/");
+    if (isWallet || isSellerApi) {
+      const config = walletSupabaseConfig(env);
+      if (!config) return jsonResponse({ error: "Configuração da carteira indisponível." }, 503);
+      const publicOrigin = env.WALLET_PREVIEW === "true" ? env.WALLET_PUBLIC_ORIGIN : QR_PRODUCTION_ORIGIN;
+      if (!/^https:\/\/[a-z0-9.-]+$/i.test(publicOrigin ?? "") ||
+          (env.WALLET_PREVIEW === "true" && publicOrigin.toLowerCase() === QR_PRODUCTION_ORIGIN)) {
+        return jsonResponse({ error: "Endereço público da carteira indisponível." }, 503);
+      }
+      if (isWallet) return page(config, publicOrigin);
+      return leaderSellersApi(request, {
+        ...env,
+        WALLET_PUBLIC_ORIGIN: publicOrigin,
+        SUPABASE_URL: config.url,
+        SUPABASE_PUBLISHABLE_KEY: config.key
+      }, url);
     }
 
 
