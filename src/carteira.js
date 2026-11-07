@@ -72,6 +72,17 @@ async function requireLeader(request, env) {
   const roles = (result.data || []).map(row => row.role);
   const role = LEADER_ROLES.find(item => roles.includes(item));
   if (!role) return { error: jsonResponse({ error: "Somente gerente, executivo ou supervisor pode gerir vendedores." }, 403) };
+  if (role !== "GERENTE") {
+    const profile = await getLeaderProfile(env, user.id);
+    if (!profile?.active) return { error: jsonResponse({ error: "Seu acesso de liderança está desativado. Fale com o gerente." }, 403) };
+    if (role === "SUPERVISOR" && profile.executive_user_id) {
+      const executive = await getLeaderProfile(env, profile.executive_user_id);
+      const executiveRoles = await getSellerRoles(env, [profile.executive_user_id]);
+      if (!executive?.active || executiveRoles?.[profile.executive_user_id] !== "EXECUTIVO") {
+        return { error: jsonResponse({ error: "O acesso da equipe está suspenso porque o executivo responsável está desativado." }, 403) };
+      }
+    }
+  }
   return { user, role };
 }
 
@@ -527,7 +538,9 @@ async function leaderSellersApi(request, env, url) {
         return transferTeamMember(env, leader, target, targetRole, body.transfer);
       }
       if (typeof body.active !== "boolean") return jsonResponse({ error: "Informe o novo estado do vendedor." }, 400);
-      if (targetRole !== "VENDEDOR") return jsonResponse({ error: "O desligamento de perfis de liderança ainda não está habilitado." }, 409);
+      if (targetRole !== "VENDEDOR" && !(leader.role === "GERENTE" && ["EXECUTIVO", "SUPERVISOR"].includes(targetRole))) {
+        return jsonResponse({ error: "Seu perfil não pode alterar o acesso deste integrante." }, 403);
+      }
       if (body.active) {
         const onboarding = await serviceRequest(env, "/rest/v1/seller_onboarding?seller_id=eq." + id + "&select=email_status,whatsapp_status");
         const state = onboarding.data?.[0];
@@ -539,7 +552,7 @@ async function leaderSellersApi(request, env, url) {
         body: JSON.stringify({ active: body.active })
       });
       if (!update.ok) return jsonResponse({ error: "Não foi possível alterar o acesso do vendedor." }, 503);
-      return jsonResponse({ ok: true, active: body.active });
+      return jsonResponse({ ok: true, active: body.active, role: targetRole });
     }
 
     if (!readiness.ready) return jsonResponse({ error: "O envio automático de e-mail ainda não está configurado.", readiness }, 503);
@@ -1916,7 +1929,7 @@ async function showApp() {
   isManager = roleRows.some(role => role.role === "GERENTE");
   leaderRole = roleRows.map(role => role.role).find(role => ["GERENTE", "EXECUTIVO", "SUPERVISOR"].includes(role)) || "";
 
-  if (roleRows.some(role => role.role === "VENDEDOR")) {
+  if (roleRows.some(role => role.role === "VENDEDOR") || (!isManager && ["EXECUTIVO", "SUPERVISOR"].includes(leaderRole))) {
     const { data: activeSeller, error: sellerAccessError } = await client
       .from("sellers")
       .select("id")
@@ -2023,7 +2036,7 @@ async function loadSellerManagement() {
       const sends = document.createElement("td"); sends.textContent = delivery;
       const actionCell = document.createElement("td");
       actionCell.className = "team-actions";
-      if (seller.role === "VENDEDOR") {
+      if (seller.role === "VENDEDOR" || (payload.role === "GERENTE" && ["EXECUTIVO", "SUPERVISOR"].includes(seller.role))) {
         const action = document.createElement("button"); action.type = "button"; action.className = "btn secondary";
         action.textContent = seller.active ? "Desligar" : "Reativar";
         action.addEventListener("click", () => setSellerActive(seller, !seller.active));
@@ -2134,12 +2147,18 @@ async function submitSellerTransfer(seller, select, moveTeam) {
 }
 
 async function setSellerActive(seller, active) {
+  if (!active && seller.role === "EXECUTIVO" &&
+      !window.confirm("Desativar este executivo suspende o acesso dele e dos supervisores da equipe aos dados da equipe. As contas dos vendedores e seus leads permanecem ativos. Continuar?")) return;
+  if (!active && seller.role === "SUPERVISOR" &&
+      !window.confirm("Desativar este supervisor bloqueia o acesso dele à equipe. Os vendedores e seus leads permanecem ativos; o executivo responsável mantém o acesso. Continuar?")) return;
   const status = $("sellerManagementStatus"); status.textContent = "Salvando…";
   try {
     const headers = await sellerApiHeaders();
     const response = await fetch("/api/sellers/" + encodeURIComponent(seller.id), { method: "PATCH", headers, body: JSON.stringify({ active }) });
     const result = await response.json(); if (!response.ok) throw new Error(result.error || "Não foi possível alterar o acesso.");
-    status.textContent = active ? "Vendedor reativado." : "Vendedor desligado; o acesso foi bloqueado.";
+    status.textContent = active
+      ? (seller.role === "VENDEDOR" ? "Vendedor reativado." : "Gestor reativado.")
+      : (seller.role === "VENDEDOR" ? "Vendedor desligado; o acesso foi bloqueado." : "Gestor desligado; o acesso dele e da equipe ficou suspenso.");
     await loadSellerManagement();
   } catch (error) { status.textContent = error.message; }
 }

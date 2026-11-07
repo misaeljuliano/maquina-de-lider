@@ -115,8 +115,12 @@ test("supervisor-created sellers inherit both direct parent assignments", async 
     id: "80000000-0000-4000-8000-000000000002", seller_user_id: ids.supervisor,
     name: "Supervisor A", active: true, executive_user_id: ids.executive, supervisor_user_id: null
   };
+  const executiveProfile = {
+    id: "80000000-0000-4000-8000-000000000018", seller_user_id: ids.executive,
+    name: "Executivo A", active: true, executive_user_id: null, supervisor_user_id: null
+  };
   const calls = installAPI(t, {
-    role: "SUPERVISOR", userId: ids.supervisor, profiles: [ownProfile], team: [],
+    role: "SUPERVISOR", userId: ids.supervisor, profiles: [ownProfile, executiveProfile], team: [],
     roleMap: { [ids.supervisor]: "SUPERVISOR", [ids.executive]: "EXECUTIVO" }
   });
 
@@ -191,9 +195,14 @@ test("executive can reassign a seller to a supervisor in the same team", async t
     id: "80000000-0000-4000-8000-000000000009", seller_user_id: ids.supervisor,
     active: true, executive_user_id: ids.executive, supervisor_user_id: null
   };
+  const ownExecutiveProfile = {
+    id: "80000000-0000-4000-8000-000000000019", seller_user_id: ids.executive,
+    active: true, executive_user_id: null, supervisor_user_id: null
+  };
   const calls = installAPI(t, {
     role: "EXECUTIVO", userId: ids.executive, target,
     team: [target, supervisorProfile],
+    profiles: [ownExecutiveProfile],
     roleMap: { [ids.executive]: "EXECUTIVO", [ids.seller]: "VENDEDOR", [ids.supervisor]: "SUPERVISOR" }
   });
 
@@ -217,8 +226,12 @@ test("supervisor can return a direct seller to its own executive", async t => {
     id: "80000000-0000-4000-8000-000000000011", seller_user_id: ids.supervisor,
     active: true, executive_user_id: ids.executive, supervisor_user_id: null
   };
+  const executiveProfile = {
+    id: "80000000-0000-4000-8000-000000000020", seller_user_id: ids.executive,
+    name: "Executivo A", active: true, executive_user_id: null, supervisor_user_id: null
+  };
   const calls = installAPI(t, {
-    role: "SUPERVISOR", userId: ids.supervisor, target, team: [target], profiles: [ownProfile],
+    role: "SUPERVISOR", userId: ids.supervisor, target, team: [target], profiles: [ownProfile, executiveProfile],
     roleMap: { [ids.supervisor]: "SUPERVISOR", [ids.executive]: "EXECUTIVO", [ids.seller]: "VENDEDOR" }
   });
 
@@ -231,4 +244,100 @@ test("supervisor can return a direct seller to its own executive", async t => {
   const transfer = calls.find(call => call.url.pathname === "/rest/v1/rpc/transfer_seller_hierarchy");
   assert.equal(transfer.body.p_new_executive_user_id, ids.executive);
   assert.equal(transfer.body.p_new_supervisor_user_id, null);
+});
+
+test("manager can deactivate an executive profile", async t => {
+  const target = {
+    id: "80000000-0000-4000-8000-000000000012", seller_user_id: ids.executive,
+    name: "Executivo A", active: true, executive_user_id: null, supervisor_user_id: null
+  };
+  const calls = installAPI(t, {
+    role: "GERENTE", userId: ids.manager, team: [target], profiles: [target],
+    target, roleMap: { [ids.manager]: "GERENTE", [ids.executive]: "EXECUTIVO" }
+  });
+
+  const response = await worker.fetch(new Request("https://wallet-staging.example.test/api/sellers/" + target.id, {
+    method: "PATCH", headers: { authorization: "Bearer test-token", "content-type": "application/json" },
+    body: JSON.stringify({ active: false })
+  }), preview);
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), { ok: true, active: false, role: "EXECUTIVO" });
+  const update = calls.find(call => call.url.pathname === "/rest/v1/sellers" && call.method === "PATCH");
+  assert.deepEqual(update.body, { active: false });
+});
+
+test("manager can deactivate a supervisor profile", async t => {
+  const target = {
+    id: "80000000-0000-4000-8000-000000000021", seller_user_id: ids.supervisor,
+    name: "Supervisor A", active: true, executive_user_id: ids.executive, supervisor_user_id: null
+  };
+  const calls = installAPI(t, {
+    role: "GERENTE", userId: ids.manager, team: [target], profiles: [target],
+    target, roleMap: { [ids.manager]: "GERENTE", [ids.supervisor]: "SUPERVISOR" }
+  });
+
+  const response = await worker.fetch(new Request("https://wallet-staging.example.test/api/sellers/" + target.id, {
+    method: "PATCH", headers: { authorization: "Bearer test-token", "content-type": "application/json" },
+    body: JSON.stringify({ active: false })
+  }), preview);
+
+  assert.equal(response.status, 200);
+  assert.equal((await response.json()).role, "SUPERVISOR");
+  assert.equal(calls.some(call => call.method === "PATCH" && call.body.active === false), true);
+});
+
+test("an executive cannot deactivate a supervisor", async t => {
+  const ownProfile = { id: "80000000-0000-4000-8000-000000000013", seller_user_id: ids.executive, active: true };
+  const target = {
+    id: "80000000-0000-4000-8000-000000000014", seller_user_id: ids.supervisor,
+    name: "Supervisor A", active: true, executive_user_id: ids.executive, supervisor_user_id: null
+  };
+  const calls = installAPI(t, {
+    role: "EXECUTIVO", userId: ids.executive, team: [target], profiles: [ownProfile, target], target,
+    roleMap: { [ids.executive]: "EXECUTIVO", [ids.supervisor]: "SUPERVISOR" }
+  });
+
+  const response = await worker.fetch(new Request("https://wallet-staging.example.test/api/sellers/" + target.id, {
+    method: "PATCH", headers: { authorization: "Bearer test-token", "content-type": "application/json" },
+    body: JSON.stringify({ active: false })
+  }), preview);
+
+  assert.equal(response.status, 403);
+  assert.equal(calls.some(call => call.url.pathname === "/rest/v1/sellers" && call.method === "PATCH"), false);
+});
+
+test("a deactivated leader cannot manage the team", async t => {
+  const ownProfile = { id: "80000000-0000-4000-8000-000000000015", seller_user_id: ids.executive, active: false };
+  installAPI(t, {
+    role: "EXECUTIVO", userId: ids.executive, profiles: [ownProfile],
+    roleMap: { [ids.executive]: "EXECUTIVO" }
+  });
+
+  const response = await worker.fetch(new Request("https://wallet-staging.example.test/api/sellers", {
+    headers: { authorization: "Bearer test-token" }
+  }), preview);
+
+  assert.equal(response.status, 403);
+});
+
+test("a supervisor cannot manage the team while its executive is inactive", async t => {
+  const supervisorProfile = {
+    id: "80000000-0000-4000-8000-000000000016", seller_user_id: ids.supervisor,
+    active: true, executive_user_id: ids.executive
+  };
+  const executiveProfile = {
+    id: "80000000-0000-4000-8000-000000000017", seller_user_id: ids.executive,
+    active: false, executive_user_id: null
+  };
+  installAPI(t, {
+    role: "SUPERVISOR", userId: ids.supervisor, profiles: [supervisorProfile, executiveProfile],
+    roleMap: { [ids.supervisor]: "SUPERVISOR", [ids.executive]: "EXECUTIVO" }
+  });
+
+  const response = await worker.fetch(new Request("https://wallet-staging.example.test/api/sellers", {
+    headers: { authorization: "Bearer test-token" }
+  }), preview);
+
+  assert.equal(response.status, 403);
 });

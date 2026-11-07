@@ -42,7 +42,8 @@ async function exerciseLeaderScope(t, role) {
       const userFilter = url.searchParams.get("user_id") || "";
       if (userFilter.startsWith("eq.")) {
         const id = userFilter.slice(3);
-        return Response.json(id === leaderId ? [{ user_id: id, role }] : [{ user_id: id, role: "VENDEDOR" }]);
+        const resolvedRole = id === leaderId ? role : id === executiveId ? "EXECUTIVO" : "VENDEDOR";
+        return Response.json([{ user_id: id, role: resolvedRole }]);
       }
       const ids = userFilter.match(/in\.\((.*)\)/)?.[1]?.split(",") || [];
       return Response.json(ids.map(id => ({ user_id: id, role: id === leaderId ? role : id === ownSeller.seller_user_id ? "VENDEDOR" : id === otherLeaderId ? "EXECUTIVO" : id === executiveId ? "EXECUTIVO" : id === supervisorId ? "SUPERVISOR" : "VENDEDOR" })));
@@ -60,6 +61,17 @@ async function exerciseLeaderScope(t, role) {
       return Response.json([{ active: false }]);
     }
     if (url.pathname === "/rest/v1/sellers") {
+      const profileUser = url.searchParams.get("seller_user_id");
+      if (profileUser === "eq." + leaderId) {
+        return Response.json([{
+          id: "70000000-0000-4000-8000-000000000040", seller_user_id: leaderId,
+          active: true, executive_user_id: role === "SUPERVISOR" ? executiveId : null,
+          supervisor_user_id: null
+        }]);
+      }
+      if (profileUser === "eq." + executiveId) {
+        return Response.json([{ id: "70000000-0000-4000-8000-000000000041", seller_user_id: executiveId, active: true }]);
+      }
       const idFilter = url.searchParams.get("id");
       if (idFilter === "eq." + ownSellerId) return Response.json([ownSeller]);
       if (idFilter === "eq." + otherSellerId) return Response.json([otherSeller]);
