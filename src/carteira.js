@@ -1539,10 +1539,33 @@ async function showApp() {
     .eq("user_id", user.id);
 
   if (rolesError) {
+    $("loginError").textContent = "Não foi possível confirmar seu perfil. Tente novamente.";
     console.error(rolesError);
-  } else {
-    isManager = (roles || []).some(role => role.role === "GERENTE");
-    leaderRole = (roles || []).map(role => role.role).find(role => ["GERENTE", "EXECUTIVO", "SUPERVISOR"].includes(role)) || "";
+    return;
+  }
+
+  const roleRows = roles || [];
+  isManager = roleRows.some(role => role.role === "GERENTE");
+  leaderRole = roleRows.map(role => role.role).find(role => ["GERENTE", "EXECUTIVO", "SUPERVISOR"].includes(role)) || "";
+
+  if (roleRows.some(role => role.role === "VENDEDOR")) {
+    const { data: activeSeller, error: sellerAccessError } = await client
+      .from("sellers")
+      .select("id")
+      .eq("seller_user_id", user.id)
+      .eq("active", true)
+      .maybeSingle();
+
+    if (sellerAccessError || !activeSeller) {
+      await client.auth.signOut();
+      $("app").classList.add("hidden");
+      $("login").classList.remove("hidden");
+      $("loginError").textContent = sellerAccessError
+        ? "Não foi possível confirmar se seu acesso está ativo. Tente novamente."
+        : "Seu acesso à carteira está desativado. Fale com seu gerente para reativá-lo.";
+      if (sellerAccessError) console.error(sellerAccessError);
+      return;
+    }
   }
 
   $("managerObservationHeader").classList.toggle("hidden", !isManager);
