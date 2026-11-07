@@ -112,6 +112,9 @@ function slugify(value) {
 }
 
 async function sendSellerEmail(env, email, name, qrUrl, qrPng, inviteUrl, slug) {
+  // qrBase64() already returns the validated base64 payload, without a data URL prefix.
+  const png = qrPng;
+
   const response = await fetch("https://api.resend.com/emails", {
     method: "POST",
     headers: { Authorization: "Bearer " + env.RESEND_API_KEY, "content-type": "application/json" },
@@ -121,10 +124,17 @@ async function sendSellerEmail(env, email, name, qrUrl, qrPng, inviteUrl, slug) 
       subject: "Seu acesso e QR Code da Máquina de Líder",
       text: "Olá " + name + ". Acesse sua carteira pelo convite e use o QR Code em anexo. Link do QR: " + qrUrl + "\nAtive seu acesso: " + inviteUrl,
       html: "<p>Olá " + safeHtml(name) + ".</p><p>Seu acesso à Minha Carteira está pronto. Abra o convite para definir sua senha.</p><p><a href=\"" + safeHtml(inviteUrl) + "\">Ativar meu acesso</a></p><p>Este é seu QR Code oficial. O link permanente é <a href=\"" + safeHtml(qrUrl) + "\">" + safeHtml(qrUrl) + "</a>.</p><p>O arquivo PNG do QR Code está anexado.</p>",
-      attachments: [{ filename: "qr-" + slug + ".png", content: qrPng }]
+      attachments: [{ filename: "qr-" + slug + ".png", content: png }]
     })
   });
-  return { ok: response.ok, status: response.status };
+  let errorMessage = "";
+  if (!response.ok) {
+    try {
+      const payload = await response.json();
+      errorMessage = String(payload?.message || payload?.name || "");
+    } catch { /* Keep provider errors optional and never log credentials. */ }
+  }
+  return { ok: response.ok, status: response.status, errorMessage };
 }
 
 async function createInviteLink(env, email, name) {
@@ -135,8 +145,56 @@ async function createInviteLink(env, email, name) {
     body: JSON.stringify({
       type: "invite", email,
       data: { name, role: "VENDEDOR" }
+
     })
   });
+}
+
+function generatedActionLink(result) {
+  return result?.data?.properties?.action_link || result?.data?.action_link;
+}
+
+function generatedUserId(result) {
+  return result?.data?.user?.id || result?.data?.user_id || result?.data?.id;
+}
+
+async function findPendingAuthUser(env, email) {
+  const result = await serviceRequest(env, "/auth/v1/admin/users?page=1&per_page=1000");
+  const users = Array.isArray(result.data?.users) ? result.data.users : Array.isArray(result.data) ? result.data : [];
+  if (!result.ok) return null;
+  const user = users.find(item => String(item.email || "").toLowerCase() === email.toLowerCase());
+  if (!user || user.confirmed_at || !user.invited_at || !SELLER_ID_RE.test(user.id || "")) return null;
+  return user;
+}
+
+async function createRecoveryLink(env, email) {
+  return serviceRequest(env, "/auth/v1/admin/generate_link", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      type: "recovery", email,
+      redirect_to: env.WALLET_PUBLIC_ORIGIN + "/carteira"
+    })
+  });
+}
+
+async function createSellerAuthLink(env, email, name) {
+  const invite = await createInviteLink(env, email, name);
+  const inviteUrl = generatedActionLink(invite);
+  const userId = generatedUserId(invite);
+  if (invite.ok && SELLER_ID_RE.test(userId || "") && typeof inviteUrl === "string") {
+    return { ...invite, userId, inviteUrl };
+  }
+  if (invite.status !== 422) return { ...invite, userId, inviteUrl };
+
+  const pendingUser = await findPendingAuthUser(env, email);
+  if (!pendingUser) return { ...invite, userId, inviteUrl };
+  const recovery = await createRecoveryLink(env, email);
+  return {
+    ...recovery,
+    userId: pendingUser.id,
+    inviteUrl: generatedActionLink(recovery)
+  };
 }
 
 async function getTeamRows(env, leader) {
@@ -251,9 +309,10 @@ async function leaderSellersApi(request, env, url) {
       return jsonResponse({ error: "A atribuição precisa apontar para contas já cadastradas no perfil correspondente." }, 400);
     }
 
-    const invite = await createInviteLink(env, email, name);
-    const inviteUrl = invite.data?.properties?.action_link || invite.data?.action_link;
-    const userId = invite.data?.user?.id || invite.data?.user_id || invite.data?.id;
+    const invite = await createSellerAuthLink(env, email, name);
+    const inviteUrl = invite.inviteUrl;
+    const userId = invite.userId;
+
     if (!invite.ok || !SELLER_ID_RE.test(userId || "") || typeof inviteUrl !== "string") {
       return jsonResponse({ error: invite.status === 422 ? "Já existe uma conta com esse e-mail." : "Não foi possível criar o convite de acesso." }, invite.status === 422 ? 409 : 502);
     }
@@ -332,8 +391,8 @@ async function leaderSellersApi(request, env, url) {
     const authUser = await serviceRequest(env, "/auth/v1/admin/users/" + target.seller_user_id);
     const email = authUser.data?.email;
     if (!email) return jsonResponse({ error: "Não foi possível localizar o e-mail de convite." }, 503);
-    const invite = onboarding.data[0].email_status === "sent" ? null : await createInviteLink(env, email, target.name);
-    const inviteUrl = invite?.data?.properties?.action_link || invite?.data?.action_link;
+    const invite = onboarding.data[0].email_status === "sent" ? null : await createSellerAuthLink(env, email, target.name);
+    const inviteUrl = invite?.inviteUrl;
     if (invite && (!invite.ok || typeof inviteUrl !== "string")) return jsonResponse({ error: "Não foi possível recriar o convite por e-mail." }, 502);
     return await deliverSellerOnboarding(env, {
       id, slug: target.slug, name: target.name, email, phone: target.phone, userId: target.seller_user_id, active: target.active,
@@ -353,13 +412,17 @@ async function deliverSellerOnboarding(env, seller) {
     catch { emailResult = { ok: false, status: 502 }; }
   }
   const nextEmail = emailResult.ok ? "sent" : "failed";
+  const providerDetail = String(emailResult.errorMessage || "")
+    .replace(/[\r\n]+/g, " ")
+    .replace(/re_[A-Za-z0-9_-]{10,}/g, "[redigido]")
+    .slice(0, 180);
   // WhatsApp stays manual so seller onboarding cannot trigger Meta message charges.
   const nextWhatsapp = seller.onboarding?.whatsapp_status || "pending";
   await serviceRequest(env, "/rest/v1/seller_onboarding?seller_id=eq." + seller.id, {
     method: "PATCH", headers: { "content-type": "application/json", Prefer: "return=minimal" },
     body: JSON.stringify({
       email_status: nextEmail, whatsapp_status: nextWhatsapp,
-      email_error: emailResult.ok ? null : "Falha no provedor de e-mail (HTTP " + emailResult.status + ")",
+      email_error: emailResult.ok ? null : "Falha no provedor de e-mail (HTTP " + emailResult.status + ")" + (providerDetail ? ": " + providerDetail : ""),
       whatsapp_error: null,
       attempt_count: (seller.onboarding?.attempt_count || 0) + 1,
       updated_at: new Date().toISOString()
@@ -1786,6 +1849,7 @@ function sellerQrPng(url) {
     }
   }
   return canvas.toDataURL("image/png");
+
 }
 
 async function createSeller(event) {
@@ -1801,6 +1865,7 @@ async function createSeller(event) {
     const id = crypto.randomUUID();
     const canonical = new URL("/", QR_PRODUCTION_ORIGIN); canonical.searchParams.set("vendedor", id);
     const qrPng = sellerQrPng(canonical.href);
+
     const headers = await sellerApiHeaders();
     const response = await fetch("/api/sellers", { method: "POST", headers, body: JSON.stringify({
       sellerId: id, name: $("sellerName").value.trim(), email: $("sellerEmail").value.trim(),
@@ -1823,6 +1888,7 @@ async function retrySellerDelivery(seller) {
     const canonical = new URL("/", QR_PRODUCTION_ORIGIN); canonical.searchParams.set("vendedor", seller.id);
     const headers = await sellerApiHeaders();
     const response = await fetch("/api/sellers/" + encodeURIComponent(seller.id) + "/retry", { method: "POST", headers, body: JSON.stringify({ qrPng: sellerQrPng(canonical.href) }) });
+
     const result = await response.json(); if (!response.ok) throw new Error(result.error || "Não foi possível reenviar.");
     status.textContent = result.message || "Reenvio processado."; await loadSellerManagement();
   } catch (error) { status.textContent = error.message; }
