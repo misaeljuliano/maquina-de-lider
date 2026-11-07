@@ -359,24 +359,7 @@ async function getLeaderDirectory(env, leader) {
     }
   }
 
-  const sellerParams = new URLSearchParams({
-    select: "id,name,seller_user_id,executive_user_id,supervisor_user_id,active",
-    order: "name.asc"
-  });
-  if (leader.role === "EXECUTIVO") {
-    const ownSupervisorIds = supervisors.filter(row => row.executive_user_id === leader.user.id).map(row => row.user_id);
-    sellerParams.set("or", ownSupervisorIds.length
-      ? "(executive_user_id.eq." + leader.user.id + ",supervisor_user_id.in.(" + ownSupervisorIds.join(",") + "))"
-      : "(executive_user_id.eq." + leader.user.id + ")");
-  } else if (leader.role === "SUPERVISOR") {
-    sellerParams.set("supervisor_user_id", "eq." + leader.user.id);
-  }
-  const sellerResponse = await serviceRequest(env, "/rest/v1/sellers?" + sellerParams.toString());
-  if (!sellerResponse.ok || !Array.isArray(sellerResponse.data)) return null;
-
   return {
-    executives,
-    supervisors,
     visibleLeaders: visibleLeaders.map(item => ({
       ...item,
       label: labels[item.userId] || "Usuário " + item.userId.slice(0, 8),
@@ -385,10 +368,9 @@ async function getLeaderDirectory(env, leader) {
     assignableExecutives,
     assignableSupervisors,
     transferTargets,
-    sellers: sellerResponse.data,
-    executiveChoices: executives.map(row => ({
+    executiveChoices: leader.role === "GERENTE" ? executives.map(row => ({
       id: row.user_id, label: labels[row.user_id] || "Usuário " + row.user_id.slice(0, 8)
-    }))
+    })) : []
   };
 }
 
@@ -404,7 +386,7 @@ async function getOnboardingMap(env, sellers) {
 async function leaderHierarchyApi(request, env, url) {
   const leader = await requireLeader(request, env);
   if (leader.error) return leader.error;
-  const route = url.pathname.match(/^\/api\/leaders\/([0-9a-f-]+)$/i);
+  const route = url.pathname.match(/^\/api\/leaders\/([0-9a-f-]+)(?:\/retry)?$/i);
 
   if (request.method === "GET" && url.pathname === "/api/leaders") {
     const directory = await getLeaderDirectory(env, leader);
@@ -456,8 +438,31 @@ async function leaderHierarchyApi(request, env, url) {
       method: "PATCH", headers: { "content-type": "application/json", Prefer: "return=minimal" },
       body: JSON.stringify({ invite_email_status: emailResult.ok ? "sent" : "failed", invite_email_error: detail, invite_attempt_count: 1, updated_at: new Date().toISOString() })
     });
-    if (!emailResult.ok) return jsonResponse({ created: true, userId, emailStatus: "failed", error: "Perfil criado, mas o e-mail falhou. Solicite reenvio ao gerente." }, 502);
+    if (!emailResult.ok) return jsonResponse({ created: true, userId, role, emailStatus: "failed", message: "Perfil criado, mas o e-mail falhou. Use Reenviar convite na lista." }, 201);
     return jsonResponse({ created: true, userId, role, emailStatus: "sent", message: "Convite enviado por e-mail." }, 201);
+  }
+
+  if (request.method === "POST" && route && url.pathname.endsWith("/retry")) {
+    const rowResponse = await serviceRequest(env, "/rest/v1/leader_hierarchy?user_id=eq." + route[1] + "&select=user_id,role,executive_user_id,invite_attempt_count");
+    const target = rowResponse.data?.[0];
+    if (!target) return jsonResponse({ error: "Líder não encontrado." }, 404);
+    const inScope = leader.role === "GERENTE"
+      || (leader.role === "EXECUTIVO" && target.role === "SUPERVISOR" && target.executive_user_id === leader.user.id);
+    if (!inScope) return jsonResponse({ error: "Esse líder não pertence à sua equipe." }, 403);
+    const authUser = await serviceRequest(env, "/auth/v1/admin/users/" + target.user_id);
+    const email = authUser.data?.email;
+    const name = authUser.data?.user_metadata?.name || "Líder";
+    if (!email) return jsonResponse({ error: "Não foi possível localizar o e-mail do convite." }, 503);
+    const recovery = await createRecoveryLink(env, email);
+    const inviteUrl = generatedActionLink(recovery);
+    if (!recovery.ok || !inviteUrl) return jsonResponse({ error: "Não foi possível recriar o link de acesso." }, 502);
+    const emailResult = await sendLeaderInviteEmail(env, email, name, target.role, inviteUrl).catch(() => ({ ok: false, status: 502 }));
+    await serviceRequest(env, "/rest/v1/leader_hierarchy?user_id=eq." + target.user_id, {
+      method: "PATCH", headers: { "content-type": "application/json", Prefer: "return=minimal" },
+      body: JSON.stringify({ invite_email_status: emailResult.ok ? "sent" : "failed", invite_email_error: emailResult.ok ? null : "Falha no provedor de e-mail (HTTP " + emailResult.status + ")", invite_attempt_count: (target.invite_attempt_count || 0) + 1, updated_at: new Date().toISOString() })
+    });
+    if (!emailResult.ok) return jsonResponse({ error: "O provedor de e-mail não confirmou o envio." }, 502);
+    return jsonResponse({ ok: true, message: "Convite reenviado." });
   }
 
   if (request.method === "PATCH" && route) {
@@ -1950,6 +1955,7 @@ async function loadLeaderManagement() {
     parentSelect.replaceChildren(new Option("Vincular direto à Gerência", ""));
     (payload.executiveChoices || []).forEach(item => parentSelect.add(new Option(item.label, item.id)));
     roleSelect.onchange = () => parentSelect.classList.toggle("hidden", payload.role !== "GERENTE" || roleSelect.value === "EXECUTIVO");
+    roleSelect.onchange();
     const rows = $("leaderManagementRows"); rows.replaceChildren();
     (payload.visibleLeaders || []).forEach(item => {
       const tr = document.createElement("tr");
@@ -1958,6 +1964,12 @@ async function loadLeaderManagement() {
       const parent = document.createElement("td"); parent.textContent = item.executiveLabel;
       const invite = document.createElement("td"); invite.textContent = item.inviteEmailStatus === "sent" ? "Enviado" : item.inviteEmailStatus === "failed" ? "Falhou" : "Pendente";
       const action = document.createElement("td");
+      if (item.inviteEmailStatus !== "sent") {
+        const retry = document.createElement("button"); retry.type = "button"; retry.className = "btn secondary";
+        retry.textContent = "Reenviar convite";
+        retry.addEventListener("click", () => retryLeaderInvite(item));
+        action.append(retry);
+      }
       if (payload.role === "GERENTE" && item.role === "SUPERVISOR") {
         const select = document.createElement("select");
         if (item.executiveUserId) select.add(new Option("Gerência", ""));
@@ -1992,6 +2004,18 @@ async function transferSupervisor(supervisor, executiveUserId, carrySellers) {
       ? "Supervisor e vendedores transferidos; leads permanecem nas carteiras dos mesmos vendedores."
       : "Supervisor transferido. Os vendedores continuam com o Executivo anterior ou na Gerência.";
     await loadLeaderManagement(); await loadSellerManagement();
+  } catch (error) { status.textContent = error.message; }
+}
+
+async function retryLeaderInvite(item) {
+  const status = $("leaderManagementStatus"); status.textContent = "Reenviando convite…";
+  try {
+    const headers = await sellerApiHeaders();
+    const response = await fetch("/api/leaders/" + encodeURIComponent(item.userId) + "/retry", { method: "POST", headers });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || "Não foi possível reenviar o convite.");
+    status.textContent = result.message || "Convite reenviado.";
+    await loadLeaderManagement();
   } catch (error) { status.textContent = error.message; }
 }
 
