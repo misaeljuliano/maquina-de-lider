@@ -1,7 +1,8 @@
 name = "maquina-de-lider"
 main = "src/carteira.js"
 compatibility_date = "2026-11-01"
-previews = { vars = { SUPABASE_URL = "https://hmlinyowvggqpqgzbuhw.supabase.co" } }
+previews = { vars = { SUPABASE_URL = "https://hmlinyowvggqpqgzbuhw.supabase.co", SUPABASE_PUBLISHABLE_KEY = "sb_publishable_1TmnsUmG5aw_qCf-QDstzg_U4KsudR5", WALLET_PREVIEW = "true" } }
 
 [vars]
 EMAIL_FROM = "acesso@maquinadelider.com.br"
+
