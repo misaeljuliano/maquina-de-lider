@@ -1576,6 +1576,13 @@ function sellerApiHeaders() {
   }));
 }
 
+function buildWhatsappInviteUrl(phone, name, qrUrl) {
+  const digits = String(phone || "").replace(/\\D/g, "").replace(/^55(?=\\d{10,11}$)/, "");
+  if (![10, 11].includes(digits.length)) return "";
+  const message = "Olá, " + name + "! Seu QR Code oficial da Máquina de Líder está pronto: " + qrUrl + "\\n\\nO convite para acessar sua carteira foi enviado para seu e-mail.";
+  return "https://wa.me/55" + digits + "?text=" + encodeURIComponent(message);
+}
+
 async function loadSellerManagement() {
   const status = $("sellerSetupStatus");
   const rows = $("sellerManagementRows");
