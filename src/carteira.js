@@ -668,11 +668,14 @@ function page(config, publicOrigin) {
 
 <style>
 *{box-sizing:border-box}
+:root{--wallet-control-height:40px}
 
 html{color-scheme:light}
 
 body{
   margin:0;
+  max-width:100%;
+  overflow-x:hidden;
   background:#f3f4f6;
   font-family:Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;
   color:#17191d;
@@ -746,8 +749,9 @@ body{
 .field input,
 .field select{
   width:100%;
-  min-height:48px;
-  padding:12px 14px;
+  height:var(--wallet-control-height);
+  min-height:var(--wallet-control-height);
+  padding:8px 12px;
   border:1px solid #cfd2d8;
   border-radius:11px;
   font-size:15px;
@@ -762,6 +766,11 @@ body{
 .btn{
   width:fit-content;
   max-width:100%;
+  height:var(--wallet-control-height);
+  min-height:var(--wallet-control-height);
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
   border:0;
   border-radius:9px;
   padding:9px 12px;
@@ -794,6 +803,7 @@ body{
 
 .link-button{
   border:0;
+  min-height:var(--wallet-control-height);
   padding:0;
   margin-top:14px;
   background:transparent;
@@ -839,7 +849,7 @@ body{
 
 .filters{
   display:grid;
-  grid-template-columns:2fr 1fr 1fr;
+  grid-template-columns:minmax(0,2fr) minmax(0,1fr) minmax(0,1fr);
   gap:8px;
   min-width:0
 }
@@ -847,7 +857,8 @@ body{
 .filters input,
 .filters select{
   min-width:0;
-  min-height:40px;
+  height:var(--wallet-control-height);
+  min-height:var(--wallet-control-height);
   padding:8px 10px;
   border:1px solid #cfd2d8;
   border-radius:9px;
@@ -855,8 +866,9 @@ body{
   background:#fff
 }
 
-.lead-toolbar{display:grid;grid-template-columns:minmax(0,3fr) minmax(330px,1.5fr);align-items:center;gap:10px;margin:14px 0}
-.lead-toolbar .export-actions{display:flex;justify-content:flex-end;align-items:center;gap:6px;flex-wrap:nowrap;min-width:0}
+.lead-toolbar{display:grid;grid-template-columns:minmax(0,3fr) minmax(0,1.5fr);align-items:center;gap:10px;margin:14px 0;min-width:0;width:100%}
+.lead-toolbar>.filters,.lead-toolbar>.export-actions{min-width:0}
+.lead-toolbar .export-actions{display:flex;justify-content:flex-end;align-items:center;gap:6px;flex-wrap:wrap;min-width:0}
 .lead-toolbar .btn{padding:7px 9px;border-radius:8px;font-size:11px}
 
 .seller-form{
@@ -872,7 +884,8 @@ body{
   flex:0 1 auto;
   min-width:0;
   width:auto;
-  min-height:40px;
+  height:var(--wallet-control-height);
+  min-height:var(--wallet-control-height);
   padding:7px 10px;
   border:1px solid #cfd2d8;
   border-radius:11px;
@@ -898,7 +911,8 @@ body{
   width:150px;
   min-width:0;
   max-width:150px;
-  min-height:28px;
+  height:var(--wallet-control-height);
+  min-height:var(--wallet-control-height);
   padding:4px 6px;
   border:1px solid #cfd2d8;
   border-radius:8px;
@@ -912,10 +926,7 @@ body{
   white-space:nowrap
 }
 
-.team-table .team-actions,
-.team-table .transfer-controls{
-  flex-wrap:nowrap
-}
+.team-table .team-actions,.team-table .transfer-controls{flex-wrap:nowrap}
 
 .team-table .btn{
   padding:3px 5px;
@@ -927,26 +938,27 @@ body{
 .team-table th:nth-child(7),
 .team-table td:nth-child(7){width:275px}
 
-.team-table .team-actions{gap:3px;min-width:0;white-space:nowrap}
+.team-table .team-actions{gap:3px;min-width:0;white-space:nowrap;overflow:hidden}
 .team-table .transfer-controls{flex:0 0 auto;gap:3px;min-width:0}
 .team-table .transfer-controls select{flex:0 0 96px;width:96px;min-width:96px;max-width:96px;padding:3px 4px;font-size:11px}
 .team-table{table-layout:fixed}
-.team-table th:nth-child(1),.team-table td:nth-child(1){width:15%}
-.team-table th:nth-child(2),.team-table td:nth-child(2){width:12%}
-.team-table th:nth-child(3),.team-table td:nth-child(3){width:7%}
-.team-table th:nth-child(4),.team-table td:nth-child(4){width:20%}
-.team-table th:nth-child(5),.team-table td:nth-child(5){width:12%}
-.team-table th:nth-child(6),.team-table td:nth-child(6){width:7%}
-.team-table th:nth-child(7),.team-table td:nth-child(7){width:27%}
+.team-table th:nth-child(1),.team-table td:nth-child(1){width:13%}
+.team-table th:nth-child(2),.team-table td:nth-child(2){width:11%}
+.team-table th:nth-child(3),.team-table td:nth-child(3){width:6%}
+.team-table th:nth-child(4),.team-table td:nth-child(4){width:17%}
+.team-table th:nth-child(5),.team-table td:nth-child(5){width:11%}
+.team-table th:nth-child(6),.team-table td:nth-child(6){width:6%}
+.team-table th:nth-child(7),.team-table td:nth-child(7){width:36%}
+.team-table td{min-width:0;overflow:hidden}
 .team-table td{padding:9px 7px}
 
 .icon-button{
   display:inline-flex;
   align-items:center;
   justify-content:center;
-  width:28px;
-  min-width:28px;
-  height:28px;
+  width:var(--wallet-control-height);
+  min-width:var(--wallet-control-height);
+  height:var(--wallet-control-height);
   padding:0!important;
   font-size:19px;
   line-height:1
@@ -954,12 +966,12 @@ body{
 
 .danger-icon{background:#fff!important;color:#d50000;border:1px solid #edb5b9}
 .danger-icon:hover:not(:disabled){background:#fff0f1!important}
-.team-table .danger-icon{width:25px;min-width:25px;height:25px;border:0;border-radius:7px;background:#c43a40!important;color:#fff!important;font-size:22px;font-weight:500;box-shadow:0 2px 5px rgba(150,35,42,.16)}
+.team-table .danger-icon{width:var(--wallet-control-height);min-width:var(--wallet-control-height);height:var(--wallet-control-height);border:0;border-radius:8px;background:#c43a40!important;color:#fff!important;font-size:24px;font-weight:500;box-shadow:0 2px 5px rgba(150,35,42,.16)}
 .team-table .danger-icon:hover:not(:disabled){background:#ad3036!important;box-shadow:0 3px 8px rgba(150,35,42,.22);transform:translateY(-1px)}
 .team-table .danger-icon:active{transform:scale(.94)}
 .success-icon{background:#fff!important;color:#238636;border:1px solid #a9d4b1}
 .success-icon:hover:not(:disabled){background:#f1fff4!important}
-.team-table .icon-button{width:25px;min-width:25px;height:25px;font-size:17px}
+.team-table .icon-button{width:var(--wallet-control-height);min-width:var(--wallet-control-height);height:var(--wallet-control-height);font-size:19px}
 .transfer-icon{font-size:18px}
 .whatsapp-icon{background:#31bd68!important;color:#fff!important;border:0;box-shadow:0 2px 5px rgba(35,145,78,.18)}
 .whatsapp-icon:hover:not(:disabled){background:#279f57!important;box-shadow:0 3px 7px rgba(35,145,78,.24);transform:translateY(-1px)}
@@ -970,17 +982,28 @@ body{
 .move-team-option{
   display:inline-flex;
   align-items:center;
-  gap:6px;
-  color:#444;
-  font-size:11px;
-  line-height:1.2;
-  white-space:nowrap;
-  flex:0 0 auto
+  justify-content:center;
+  width:var(--wallet-control-height);
+  min-width:var(--wallet-control-height);
+  height:var(--wallet-control-height);
+  border:1px solid #d8dbe0;
+  border-radius:8px;
+  background:#fff;
+  color:#555;
+  cursor:pointer;
+  flex:0 0 var(--wallet-control-height)
 }
 
-.move-team-option input{accent-color:#d50000;margin:0;width:16px;height:16px;flex:0 0 16px}
+.move-team-option input{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+.move-team-option:has(input:checked){background:#f8e9ea;border-color:#c43a40;color:#a82d34}
+.move-team-option:has(input:focus-visible){outline:3px solid #25282e;outline-offset:2px}
 .move-team-symbol{display:inline-flex;align-items:center;color:#555}
-.move-team-symbol svg{display:block;width:15px;height:15px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.move-team-option:has(input:checked) .move-team-symbol{color:#a82d34}
+.move-team-symbol svg{display:block;width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+
+button{min-height:var(--wallet-control-height)}
+.lead-status-select{height:var(--wallet-control-height);min-height:var(--wallet-control-height)}
+[data-observation-lead]{height:var(--wallet-control-height);padding:0 10px}
 
 .table-wrap{
   max-width:100%;
@@ -1113,6 +1136,8 @@ th{
   .team-table .transfer-controls select{flex:0 0 96px;width:96px;max-width:96px;min-width:96px}
   .team-table .move-team-option{white-space:normal}
   .team-table-wrap .team-table{table-layout:auto}
+  .team-table .team-actions{flex-wrap:wrap;white-space:normal;overflow:visible}
+  .team-table .transfer-controls{flex-wrap:wrap}
 }
 
 @media(max-width:1100px){
@@ -2392,6 +2417,7 @@ function appendTransferControls(actionCell, seller, payload) {
   }
   const moveTeam = document.createElement("input");
   moveTeam.type = "checkbox"; moveTeam.checked = true;
+  moveTeam.setAttribute("aria-label", "Levar vendedores da equipe junto com o supervisor");
   const moveTeamLabel = document.createElement("label");
   moveTeamLabel.className = "move-team-option";
   if (seller.role === "SUPERVISOR") {
@@ -2399,7 +2425,7 @@ function appendTransferControls(actionCell, seller, payload) {
     moveTeamLabel.setAttribute("aria-label", "Levar vendedores da equipe junto com o supervisor");
     const teamSymbol = document.createElement("span"); teamSymbol.className = "move-team-symbol"; teamSymbol.setAttribute("aria-hidden", "true");
     teamSymbol.innerHTML = '<svg viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="10" cy="7" r="4"/><path d="M20 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>';
-    moveTeamLabel.append(moveTeam, teamSymbol, document.createTextNode("Levar equipe junto"));
+    moveTeamLabel.append(moveTeam, teamSymbol);
   }
   const transfer = document.createElement("button"); transfer.type = "button"; transfer.className = "btn secondary icon-button transfer-icon";
   transfer.textContent = "⇄"; transfer.setAttribute("aria-label", "Transferir " + seller.name); transfer.title = "Transferir";
