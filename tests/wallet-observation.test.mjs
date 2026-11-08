@@ -60,6 +60,8 @@ test("wallet preview embeds only its configured public Supabase credentials", as
   assert.match(html, /https:\/\/staging\.supabase\.co/);
   assert.match(html, /sb_publishable_staging/);
   assert.match(html, /https:\/\/wallet-staging\.example\.test/);
+  assert.match(html, /<option value="PENDENTE_INSTALACAO">/);
+  assert.match(html, /<option value="CONECTADO">/);
   assert.doesNotMatch(html, /xmipdjjdtruutcumhrzb|test-service-secret/);
 });
 
@@ -96,7 +98,7 @@ test("seller API validates the session on the configured preview Supabase", asyn
   assert.equal(options.headers.apikey, preview.SUPABASE_PUBLISHABLE_KEY);
 });
 
-async function wallet({ manager = true, privateFieldsError = null, saveError = null,
+async function wallet({ manager = true, privateFieldsError = null, saveError = null, status = "NOVO",
   callbackHash = "", session = null, passwordReady = true, loadWallet = true } = {}) {
   const html = await (await worker.fetch(new Request("https://example.test/carteira"), {})).text();
   const script = html.match(/<script>([\s\S]*?)<\/script>/)[1];
@@ -119,7 +121,7 @@ async function wallet({ manager = true, privateFieldsError = null, saveError = n
     }
     return elements.get(id);
   };
-  const lead = { id: "lead-1", name: "Lead de teste", status: "NOVO" };
+  const lead = { id: "lead-1", name: "Lead de teste", status };
   const calls = [];
   const leadUpdates = [];
   const client = {
@@ -253,6 +255,22 @@ test("seller can change a lead status and the wallet recalculates totals", async
   assert.deepEqual(JSON.parse(JSON.stringify(walletState.leadUpdates)), [["leads", { status: "PROPOSTA" }, "id", "lead-1"]]);
   assert.equal(walletState.element("propostas").textContent, 1);
   assert.match(walletState.element("rows").innerHTML, /<option value="PROPOSTA" selected>PROPOSTA<\/option>/);
+  assert.doesNotMatch(walletState.element("rows").innerHTML, /<option value="NOVO"/);
+  assert.doesNotMatch(walletState.element("rows").innerHTML, /<option value="VENDA"/);
+
+  for (const status of ["PENDENTE_INSTALACAO", "CONECTADO"]) {
+    await walletState.changeStatus(status);
+    assert.equal(walletState.element("vendas").textContent, 1);
+    assert.match(walletState.element("rows").innerHTML, new RegExp('<option value="' + status + '" selected>'));
+  }
+});
+
+test("legacy NOVO and VENDA statuses remain visible but cannot be selected", async () => {
+  for (const status of ["NOVO", "VENDA"]) {
+    const walletState = await wallet({ manager: false, status });
+    await walletState.setSellerMode();
+    assert.match(walletState.element("rows").innerHTML, new RegExp('<option value="' + status + '" selected disabled>'));
+  }
 });
 
 test("wallet exports a valid Excel workbook with the customer sheet", async () => {
