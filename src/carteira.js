@@ -925,6 +925,14 @@ body{
 .team-table .team-actions{gap:4px;min-width:0}
 .team-table .transfer-controls{flex:1 1 auto;gap:4px;min-width:0}
 .team-table .transfer-controls select{width:100%;max-width:none;flex:1 1 0}
+.team-table{table-layout:auto}
+.team-table th:nth-child(1),.team-table td:nth-child(1){width:15%}
+.team-table th:nth-child(2),.team-table td:nth-child(2){width:13%}
+.team-table th:nth-child(3),.team-table td:nth-child(3){width:7%}
+.team-table th:nth-child(4),.team-table td:nth-child(4){width:18%}
+.team-table th:nth-child(5),.team-table td:nth-child(5){width:12%}
+.team-table th:nth-child(6),.team-table td:nth-child(6){width:7%}
+.team-table th:nth-child(7),.team-table td:nth-child(7){width:28%}
 
 .icon-button{
   display:inline-flex;
@@ -957,11 +965,13 @@ body{
   align-items:center;
   gap:6px;
   color:#444;
-  font-size:13px;
-  white-space:nowrap
+  font-size:12px;
+  line-height:1.2;
+  white-space:normal;
+  flex:0 0 auto
 }
 
-.move-team-option input{accent-color:#d50000}
+.move-team-option input{accent-color:#d50000;margin:0;width:16px;height:16px;flex:0 0 16px}
 
 .table-wrap{
   max-width:100%;
@@ -2412,9 +2422,13 @@ function appendTransferControls(actionCell, seller, payload) {
   moveTeam.type = "checkbox"; moveTeam.checked = true;
   const moveTeamLabel = document.createElement("label");
   moveTeamLabel.className = "move-team-option";
-  moveTeamLabel.append(moveTeam, document.createTextNode("Levar vendedores da equipe"));
-  if (seller.role === "SUPERVISOR") group.append(select, moveTeamLabel);
-  else group.append(select);
+  if (seller.role === "SUPERVISOR") {
+    moveTeamLabel.title = "Levar os vendedores da equipe junto com o supervisor";
+    moveTeamLabel.setAttribute("aria-label", "Levar vendedores da equipe junto com o supervisor");
+    moveTeamLabel.append(moveTeam, document.createTextNode("Levar equipe junto"));
+    actionCell.append(moveTeamLabel);
+  }
+  group.append(select);
   const transfer = document.createElement("button"); transfer.type = "button"; transfer.className = "btn secondary icon-button transfer-icon";
   transfer.textContent = "⇄"; transfer.setAttribute("aria-label", "Transferir " + seller.name); transfer.title = "Transferir";
   transfer.addEventListener("click", () => submitSellerTransfer(seller, select, moveTeam));
