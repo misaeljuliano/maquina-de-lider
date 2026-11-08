@@ -919,12 +919,6 @@ body{
   font-size:12px
 }
 
-.team-table td:nth-child(5),
-.team-table th:nth-child(5){
-  width:132px;
-  white-space:nowrap
-}
-
 .team-table .team-actions,.team-table .transfer-controls{flex-wrap:nowrap}
 
 .team-table .btn{
@@ -934,23 +928,16 @@ body{
   line-height:1.2
 }
 
-.team-table th:nth-child(7),
-.team-table td:nth-child(7){width:275px}
-
-.team-table .team-actions{gap:4px;min-width:0;white-space:nowrap;overflow:visible}
+.team-table .team-actions{gap:4px;min-width:0;white-space:nowrap;overflow:visible;justify-content:flex-end}
 .team-table .transfer-controls{flex:0 0 auto;gap:3px;min-width:0}
 .team-table .transfer-controls select{flex:0 0 96px;width:96px;min-width:96px;max-width:96px;padding:3px 4px;font-size:11px}
-.team-table{table-layout:fixed}
-.team-table th:nth-child(1),.team-table td:nth-child(1){width:13%}
-.team-table th:nth-child(2),.team-table td:nth-child(2){width:11%}
-.team-table th:nth-child(3),.team-table td:nth-child(3){width:6%}
-.team-table th:nth-child(4),.team-table td:nth-child(4){width:17%}
-.team-table th:nth-child(5),.team-table td:nth-child(5){width:11%}
-.team-table th:nth-child(6),.team-table td:nth-child(6){width:6%}
-.team-table th:nth-child(7),.team-table td:nth-child(7){width:36%}
+.team-table{table-layout:auto}
+.team-table th,.team-table td{white-space:nowrap}
+.team-table td:nth-child(2){white-space:normal}
+.team-table th:nth-child(7),.team-table td:nth-child(7){text-align:right}
 .team-table-wrap{width:100%;min-width:0}
-.team-table{display:table;width:100%!important;min-width:100%;table-layout:fixed}
-.team-table td{min-width:0}
+.team-table{display:table;width:100%!important;min-width:100%;table-layout:auto}
+.team-table th,.team-table td{min-width:0}
 .team-table td{padding:9px 7px}
 
 .icon-button{
@@ -1139,6 +1126,7 @@ th{
   .team-table-wrap .team-table{table-layout:auto}
   .team-table .team-actions{flex-wrap:wrap;white-space:normal;overflow:visible}
   .team-table .transfer-controls{flex-wrap:wrap}
+  .team-table th,.team-table td{white-space:normal}
 }
 
 @media(max-width:1100px){

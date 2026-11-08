@@ -70,7 +70,10 @@ test("wallet preview embeds only its configured public Supabase credentials", as
   assert.match(html, /\.btn\{[^}]*height:var\(--wallet-control-height\)/s);
   assert.match(html, /button\{min-height:var\(--wallet-control-height\)\}/);
   assert.match(html, /\.team-table \.danger-icon\{[^}]*height:var\(--wallet-control-height\)/s);
-  assert.match(html, /\.team-table td:nth-child\(7\)\{width:36%\}/);
+  assert.match(html, /\.team-table\{table-layout:auto\}/);
+  assert.match(html, /\.team-table th,\.team-table td\{white-space:nowrap\}/);
+  assert.match(html, /\.team-table td:nth-child\(2\)\{white-space:normal\}/);
+  assert.match(html, /\.team-table th:nth-child\(7\),\.team-table td:nth-child\(7\)\{text-align:right\}/);
   assert.match(html, /\.team-table \.transfer-controls select\{flex:0 0 96px;width:96px;min-width:96px;max-width:96px/);
   assert.match(html, /<input id="sellerPhone" type="tel" class="seller-phone-field" placeholder="WhatsApp" aria-label="WhatsApp" required>/);
   assert.doesNotMatch(html, /<th>Envios<\/th>/);
