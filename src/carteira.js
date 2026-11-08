@@ -760,6 +760,8 @@ body{
 }
 
 .btn{
+  width:fit-content;
+  max-width:100%;
   border:0;
   border-radius:11px;
   padding:12px 17px;
@@ -858,13 +860,15 @@ body{
 }
 
 .transfer-controls select{
-  min-height:32px;
-  max-width:190px;
-  padding:5px 7px;
+  width:150px;
+  min-width:0;
+  max-width:150px;
+  min-height:28px;
+  padding:4px 6px;
   border:1px solid #cfd2d8;
-  border-radius:9px;
+  border-radius:8px;
   background:#fff;
-  font-size:13px
+  font-size:12px
 }
 
 .team-table td:nth-child(5),
@@ -875,23 +879,30 @@ body{
 
 .team-table .team-actions,
 .team-table .transfer-controls{
-  flex-wrap:wrap
+  flex-wrap:nowrap
 }
 
 .team-table .btn{
-  padding:6px 9px;
-  border-radius:8px;
-  font-size:11px;
+  padding:5px 7px;
+  border-radius:7px;
+  font-size:10px;
   line-height:1.2
 }
+
+.team-table th:nth-child(8),
+.team-table td:nth-child(8){width:275px}
+
+.team-table .team-actions{gap:4px;min-width:0}
+.team-table .transfer-controls{flex:1 1 auto;gap:4px;min-width:0}
+.team-table .transfer-controls select{width:100%;max-width:none;flex:1 1 0}
 
 .icon-button{
   display:inline-flex;
   align-items:center;
   justify-content:center;
-  width:32px;
-  min-width:32px;
-  height:32px;
+  width:28px;
+  min-width:28px;
+  height:28px;
   padding:0!important;
   font-size:19px;
   line-height:1
@@ -899,6 +910,9 @@ body{
 
 .danger-icon{background:#fff!important;color:#d50000;border:1px solid #edb5b9}
 .danger-icon:hover:not(:disabled){background:#fff0f1!important}
+.team-table .danger-icon{width:30px;min-width:30px;height:30px;border:0;border-radius:9px;background:#d50000!important;color:#fff!important;font-size:27px;font-weight:500;box-shadow:0 3px 8px rgba(213,0,0,.22)}
+.team-table .danger-icon:hover:not(:disabled){background:#b90000!important;box-shadow:0 4px 10px rgba(185,0,0,.3);transform:translateY(-1px)}
+.team-table .danger-icon:active{transform:scale(.94)}
 .success-icon{background:#fff!important;color:#238636;border:1px solid #a9d4b1}
 .success-icon:hover:not(:disabled){background:#f1fff4!important}
 .transfer-icon{font-size:21px}
@@ -1038,12 +1052,13 @@ th{
   .table-wrap tbody td[data-label]::before,.team-table-wrap tbody td[data-label]::before{content:attr(data-label);font-weight:700;color:#434852;overflow-wrap:normal}
   .table-wrap tbody td:last-child,.team-table-wrap tbody td:last-child{border-bottom:0}
   .table-wrap tbody td.phone-cell,.team-table-wrap tbody td.phone-cell{white-space:nowrap}
-  .table-wrap tbody td:nth-child(2),.team-table-wrap tbody td:nth-child(5){width:100%}
+  .table-wrap tbody td:nth-child(2),.team-table-wrap tbody td:nth-child(2),.team-table-wrap tbody td:nth-child(5),.team-table-wrap tbody td:nth-child(8){width:100%}
   .table-wrap tbody td.empty{display:block;padding:20px;border:0}
-  .team-table-wrap tbody td.team-actions{display:block}
-  .team-table-wrap .team-actions::before{display:block;margin-bottom:6px}
-  .team-table .team-actions,.team-table .transfer-controls{gap:5px}
-  .team-table .transfer-controls select{max-width:100%;min-width:0;flex:1 1 140px}
+  .team-table-wrap tbody td.team-actions{display:flex;grid-column:1/-1;align-items:center;flex-wrap:wrap}
+  .team-table-wrap .team-actions::before{display:block;flex:0 0 100%;margin-bottom:5px}
+  .team-table .team-actions,.team-table .transfer-controls{gap:4px;flex-wrap:nowrap}
+  .team-table .transfer-controls{flex:1 1 90px;width:auto;min-width:0}
+  .team-table .transfer-controls select{width:100%;max-width:none;min-width:0;flex:1 1 0}
   .team-table .move-team-option{white-space:normal}
   .team-table-wrap .team-table{table-layout:auto}
 }

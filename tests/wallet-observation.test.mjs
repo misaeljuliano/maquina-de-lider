@@ -66,6 +66,9 @@ test("wallet preview embeds only its configured public Supabase credentials", as
   assert.match(html, /\.table-wrap\s*\{\s*max-width:100%/s);
   assert.match(html, /\.table-wrap tbody tr,.team-table-wrap tbody tr\{display:block/);
   assert.match(html, /\.icon-button\{/);
+  assert.match(html, /\.team-table \.danger-icon\{[^}]*font-size:27px/s);
+  assert.match(html, /\.team-table td:nth-child\(8\)\{width:275px\}/);
+  assert.match(html, /\.team-table \.transfer-controls select\{width:100%;max-width:none;flex:1 1 0\}/);
   assert.match(html, /aria-label", "Transferir " \+ seller\.name/);
   assert.match(html, /aria-label", "Abrir WhatsApp para " \+ seller\.name/);
   assert.doesNotMatch(html, /min-width:\s*900px/);
