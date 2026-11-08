@@ -852,6 +852,32 @@ body{
   background:#fff
 }
 
+.seller-form{
+  display:flex;
+  align-items:stretch;
+  gap:10px;
+  flex-wrap:wrap;
+  margin:14px 0
+}
+
+.seller-form>input,.seller-form>select{
+  flex:0 1 auto;
+  min-width:0;
+  width:auto;
+  min-height:44px;
+  padding:9px 12px;
+  border:1px solid #cfd2d8;
+  border-radius:11px;
+  font-size:14px;
+  background:#fff
+}
+#sellerRole{width:145px}
+#sellerName{width:180px}
+#sellerEmail{width:180px}
+#sellerPhone{width:112px}
+#sellerRegion{width:130px}
+#sellerExecutive,#sellerSupervisor{width:190px}
+
 .team-actions,.transfer-controls{
   display:flex;
   align-items:center;
@@ -889,8 +915,8 @@ body{
   line-height:1.2
 }
 
-.team-table th:nth-child(8),
-.team-table td:nth-child(8){width:275px}
+.team-table th:nth-child(7),
+.team-table td:nth-child(7){width:275px}
 
 .team-table .team-actions{gap:4px;min-width:0}
 .team-table .transfer-controls{flex:1 1 auto;gap:4px;min-width:0}
@@ -916,8 +942,8 @@ body{
 .success-icon{background:#fff!important;color:#238636;border:1px solid #a9d4b1}
 .success-icon:hover:not(:disabled){background:#f1fff4!important}
 .transfer-icon{font-size:21px}
-.whatsapp-icon{background:#fff!important;color:#168a45;border:1px solid #b7dcc5}
-.whatsapp-icon:hover:not(:disabled){background:#f0fff5!important}
+.whatsapp-icon{background:#25d366!important;color:#fff!important;border:0;box-shadow:0 2px 6px rgba(37,211,102,.24)}
+.whatsapp-icon:hover:not(:disabled){background:#1eae54!important;box-shadow:0 3px 8px rgba(30,174,84,.3);transform:translateY(-1px)}
 .whatsapp-icon svg{display:block;width:18px;height:18px}
 .whatsapp-icon svg path:first-child{fill:none;stroke:currentColor;stroke-width:1.8;stroke-linejoin:round}
 .whatsapp-icon svg path:last-child{fill:currentColor;stroke:none}
@@ -1031,6 +1057,9 @@ th{
     grid-template-columns:1fr
   }
 
+  .seller-form>input:not(#sellerPhone),.seller-form>select{flex:1 1 150px;width:auto}
+  .seller-form>#sellerPhone{flex:0 0 112px;width:112px}
+
   .wrap{
     padding:0 12px
   }
@@ -1052,7 +1081,7 @@ th{
   .table-wrap tbody td[data-label]::before,.team-table-wrap tbody td[data-label]::before{content:attr(data-label);font-weight:700;color:#434852;overflow-wrap:normal}
   .table-wrap tbody td:last-child,.team-table-wrap tbody td:last-child{border-bottom:0}
   .table-wrap tbody td.phone-cell,.team-table-wrap tbody td.phone-cell{white-space:nowrap}
-  .table-wrap tbody td:nth-child(2),.team-table-wrap tbody td:nth-child(2),.team-table-wrap tbody td:nth-child(5),.team-table-wrap tbody td:nth-child(8){width:100%}
+  .table-wrap tbody td:nth-child(2),.team-table-wrap tbody td:nth-child(2),.team-table-wrap tbody td:nth-child(5),.team-table-wrap tbody td:nth-child(7){width:100%}
   .table-wrap tbody td.empty{display:block;padding:20px;border:0}
   .team-table-wrap tbody td.team-actions{display:flex;grid-column:1/-1;align-items:center;flex-wrap:wrap}
   .team-table-wrap .team-actions::before{display:block;flex:0 0 100%;margin-bottom:5px}
@@ -1215,7 +1244,7 @@ th{
     <h2 class="h">Equipe</h2>
     <p class="muted">O convite e o QR Code são enviados automaticamente por e-mail. O botão do WhatsApp abre uma mensagem pronta para envio manual, sem cobrança da Meta.</p>
     <p id="sellerSetupStatus" class="muted" role="status" aria-live="polite"></p>
-    <form id="sellerForm" class="filters" style="grid-template-columns:repeat(auto-fit,minmax(190px,1fr));margin:14px 0">
+    <form id="sellerForm" class="seller-form">
       <select id="sellerRole" aria-label="Perfil da equipe">
         <option value="VENDEDOR">Vendedor</option>
         <option value="SUPERVISOR">Supervisor</option>
@@ -1223,7 +1252,7 @@ th{
       </select>
       <input id="sellerName" placeholder="Nome completo" required maxlength="120">
       <input id="sellerEmail" type="email" placeholder="E-mail" required maxlength="254">
-      <input id="sellerPhone" type="tel" placeholder="WhatsApp com DDD (obrigatório)" aria-label="WhatsApp com DDD (obrigatório)" required>
+      <input id="sellerPhone" type="tel" class="seller-phone-field" placeholder="WhatsApp" aria-label="WhatsApp" required>
       <input id="sellerRegion" placeholder="Região" value="Santos" required maxlength="80">
       <select id="sellerExecutive" class="hidden"><option value="">Selecione o executivo</option></select>
       <select id="sellerSupervisor" class="hidden"><option value="">Selecione o supervisor</option></select>
@@ -1232,7 +1261,7 @@ th{
     <div id="sellerManagementStatus" class="muted" role="status" aria-live="polite"></div>
     <div class="team-table-wrap">
       <table class="team-table" style="width:100%;border-collapse:collapse">
-        <thead><tr><th>Integrante</th><th>Perfil</th><th>Região</th><th>E-mail</th><th>Telefone</th><th>Estado</th><th>Envios</th><th>Ação</th></tr></thead>
+        <thead><tr><th>Integrante</th><th>Perfil</th><th>Região</th><th>E-mail</th><th>Telefone</th><th>Estado</th><th>Ação</th></tr></thead>
         <tbody id="sellerManagementRows"></tbody>
       </table>
     </div>
@@ -2297,17 +2326,12 @@ async function loadSellerManagement() {
       const tr = document.createElement("tr");
       const state = seller.active ? "Ativo" : "Desligado";
       const emailStatus = seller.onboarding?.email_status;
-      const emailLabel = emailStatus === "sent" ? "enviado" : emailStatus === "failed" ? "falhou" : "pendente";
-      const delivery = seller.onboarding
-        ? "E-mail: " + emailLabel + " · WhatsApp: " + (emailStatus === "sent" ? "manual (sem custo)" : "após confirmar o e-mail")
-        : "Sem controle de envio";
       const name = document.createElement("td"); name.dataset.label = "Integrante"; name.textContent = seller.name;
       const role = document.createElement("td"); role.dataset.label = "Perfil"; role.textContent = seller.role === "EXECUTIVO" ? "Executivo Coordenador" : seller.role === "SUPERVISOR" ? "Supervisor" : "Vendedor";
       const region = document.createElement("td"); region.dataset.label = "Região"; region.textContent = seller.region || "—";
       const email = document.createElement("td"); email.dataset.label = "E-mail"; email.textContent = seller.email || "—";
       const phone = document.createElement("td"); phone.dataset.label = "Telefone"; phone.className = "phone-cell"; phone.textContent = seller.phone ? formatPhone(seller.phone) : "—";
       const active = document.createElement("td"); active.dataset.label = "Estado"; active.textContent = state;
-      const sends = document.createElement("td"); sends.dataset.label = "Envios"; sends.textContent = delivery;
       const actionCell = document.createElement("td");
       actionCell.dataset.label = "Ação";
       actionCell.className = "team-actions";
@@ -2335,7 +2359,7 @@ async function loadSellerManagement() {
       if (seller.role === "SUPERVISOR" && payload.role === "GERENTE" || seller.role === "VENDEDOR") {
         appendTransferControls(actionCell, seller, payload);
       }
-      tr.append(name, role, region, email, phone, active, sends, actionCell); rows.append(tr);
+      tr.append(name, role, region, email, phone, active, actionCell); rows.append(tr);
     });
   } catch (error) {
     status.textContent = error.message;
