@@ -121,14 +121,23 @@ async function wallet({ manager = true, privateFieldsError = null, saveError = n
   };
   const lead = { id: "lead-1", name: "Lead de teste", status: "NOVO" };
   const calls = [];
+  const leadUpdates = [];
   const client = {
     auth: {
       onAuthStateChange() {},
       async getSession() { return { data: { session } }; },
       async getUser() { return { data: { user: session?.user } }; }
     },
-    from() {
-      return { select: () => ({ order: async () => ({ data: [lead] }) }) };
+    from(table) {
+      return {
+        select: () => ({ order: async () => ({ data: [lead] }) }),
+        update(values) {
+          return { eq(column, value) {
+            leadUpdates.push([table, values, column, value]);
+            return { select: () => ({ maybeSingle: async () => ({ data: { id: value }, error: saveError }) }) };
+          } };
+        }
+      };
     },
     async rpc(name, args) {
       calls.push([name, args === undefined ? undefined : JSON.parse(JSON.stringify(args))]);
@@ -151,7 +160,8 @@ async function wallet({ manager = true, privateFieldsError = null, saveError = n
       context.window.location.hash = "";
       return client;
     } },
-    console: { error() {} }
+    console: { error() {} },
+    TextEncoder, Blob, Uint8Array, Uint32Array, DataView, ArrayBuffer
   });
   await vm.runInContext(script, context);
   if (loadWallet) await vm.runInContext("isManager = " + manager + "; loadLeads()", context);
@@ -160,7 +170,13 @@ async function wallet({ manager = true, privateFieldsError = null, saveError = n
     target: { closest: () => ({ dataset: { observationLead: lead.id } }) }
   });
   const submit = () => element("observationForm").handlers.submit({ preventDefault() {} });
-  return { element, calls, edit, submit };
+  const setSellerMode = () => vm.runInContext("canUpdateLeadStatus = true; render()", context);
+  const changeStatus = (value) => {
+    const control = { value, disabled: false, isConnected: true, dataset: { leadStatus: lead.id } };
+    return element("rows").handlers.change({ target: { closest: () => control } });
+  };
+  const workbook = () => vm.runInContext('createXlsx([["Cliente"], ["Nome de teste"]], "Clientes")', context);
+  return { element, calls, edit, submit, leadUpdates, setSellerMode, changeStatus, workbook };
 }
 
 test("invite and recovery links show password setup before loading any wallet data", async () => {
@@ -227,6 +243,26 @@ test("non-managers retain the lead list without private fields or an editor", as
   edit();
   await submit();
   assert.equal(calls.length, 0);
+});
+
+test("seller can change a lead status and the wallet recalculates totals", async () => {
+  const walletState = await wallet({ manager: false });
+  await walletState.setSellerMode();
+  assert.match(walletState.element("rows").innerHTML, /data-lead-status="lead-1"/);
+  await walletState.changeStatus("PROPOSTA");
+  assert.deepEqual(JSON.parse(JSON.stringify(walletState.leadUpdates)), [["leads", { status: "PROPOSTA" }, "id", "lead-1"]]);
+  assert.equal(walletState.element("propostas").textContent, 1);
+  assert.match(walletState.element("rows").innerHTML, /<option value="PROPOSTA" selected>PROPOSTA<\/option>/);
+});
+
+test("wallet exports a valid Excel workbook with the customer sheet", async () => {
+  const walletState = await wallet({ manager: false });
+  const workbook = walletState.workbook();
+  assert.equal(workbook.type, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+  const bytes = Buffer.from(await workbook.arrayBuffer());
+  assert.equal(bytes.readUInt32LE(0), 0x04034B50);
+  assert.ok(bytes.includes(Buffer.from("xl/workbook.xml")));
+  assert.ok(bytes.includes(Buffer.from("Nome de teste")));
 });
 
 test("failed private read cannot overwrite an observation with an unloaded value", async () => {
