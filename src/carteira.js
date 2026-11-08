@@ -858,9 +858,9 @@ body{
 }
 
 .transfer-controls select{
-  min-height:36px;
-  max-width:220px;
-  padding:6px 8px;
+  min-height:32px;
+  max-width:190px;
+  padding:5px 7px;
   border:1px solid #cfd2d8;
   border-radius:9px;
   background:#fff;
@@ -869,24 +869,44 @@ body{
 
 .team-table td:nth-child(5),
 .team-table th:nth-child(5){
-  min-width:145px;
+  width:132px;
   white-space:nowrap
-}
-
-.team-table td:nth-child(8){
-  min-width:390px
 }
 
 .team-table .team-actions,
 .team-table .transfer-controls{
-  flex-wrap:nowrap
+  flex-wrap:wrap
 }
 
 .team-table .btn{
-  padding:8px 12px;
-  border-radius:9px;
-  font-size:12px
+  padding:6px 9px;
+  border-radius:8px;
+  font-size:11px;
+  line-height:1.2
 }
+
+.icon-button{
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  width:32px;
+  min-width:32px;
+  height:32px;
+  padding:0!important;
+  font-size:19px;
+  line-height:1
+}
+
+.danger-icon{background:#fff!important;color:#d50000;border:1px solid #edb5b9}
+.danger-icon:hover:not(:disabled){background:#fff0f1!important}
+.success-icon{background:#fff!important;color:#238636;border:1px solid #a9d4b1}
+.success-icon:hover:not(:disabled){background:#f1fff4!important}
+.transfer-icon{font-size:21px}
+.whatsapp-icon{background:#fff!important;color:#168a45;border:1px solid #b7dcc5}
+.whatsapp-icon:hover:not(:disabled){background:#f0fff5!important}
+.whatsapp-icon svg{display:block;width:18px;height:18px}
+.whatsapp-icon svg path:first-child{fill:none;stroke:currentColor;stroke-width:1.8;stroke-linejoin:round}
+.whatsapp-icon svg path:last-child{fill:currentColor;stroke:none}
 
 .move-team-option{
   display:inline-flex;
@@ -900,14 +920,20 @@ body{
 .move-team-option input{accent-color:#d50000}
 
 .table-wrap{
-  overflow:auto;
+  max-width:100%;
   margin-top:14px
 }
+
+.team-table-wrap{max-width:100%;overflow:visible;margin-top:12px}
+
+.lead-table th:nth-child(2),
+.lead-table td:nth-child(2){width:136px;white-space:nowrap}
 
 table{
   width:100%;
   border-collapse:collapse;
-  min-width:900px
+  min-width:0;
+  table-layout:fixed
 }
 
 th,td{
@@ -916,7 +942,8 @@ th,td{
   text-align:left;
   font-size:13px;
   vertical-align:top;
-  white-space:nowrap
+  white-space:normal;
+  overflow-wrap:anywhere
 }
 
 th{
@@ -1001,7 +1028,24 @@ th{
 
   .top{padding:16px 18px}
   .wrap{margin:16px auto}
-  .table-wrap{border:1px solid #e8eaee;border-radius:12px}
+  .table-wrap,.team-table-wrap{border:0;border-radius:0;overflow:visible}
+
+  .table-wrap table,.team-table-wrap table{display:block;width:100%;min-width:0}
+  .table-wrap thead,.team-table-wrap thead{display:none}
+  .table-wrap tbody,.team-table-wrap tbody{display:grid;gap:10px;width:100%}
+  .table-wrap tbody tr,.team-table-wrap tbody tr{display:block;width:100%;padding:10px 12px;border:1px solid #e6e8ec;border-radius:12px;background:#fff}
+  .table-wrap tbody td,.team-table-wrap tbody td{display:grid;grid-template-columns:minmax(86px,36%) minmax(0,1fr);gap:8px;width:100%;padding:7px 2px;border-bottom:1px solid #f0f1f3;font-size:12px;overflow-wrap:anywhere}
+  .table-wrap tbody td[data-label]::before,.team-table-wrap tbody td[data-label]::before{content:attr(data-label);font-weight:700;color:#434852;overflow-wrap:normal}
+  .table-wrap tbody td:last-child,.team-table-wrap tbody td:last-child{border-bottom:0}
+  .table-wrap tbody td.phone-cell,.team-table-wrap tbody td.phone-cell{white-space:nowrap}
+  .table-wrap tbody td:nth-child(2),.team-table-wrap tbody td:nth-child(5){width:100%}
+  .table-wrap tbody td.empty{display:block;padding:20px;border:0}
+  .team-table-wrap tbody td.team-actions{display:block}
+  .team-table-wrap .team-actions::before{display:block;margin-bottom:6px}
+  .team-table .team-actions,.team-table .transfer-controls{gap:5px}
+  .team-table .transfer-controls select{max-width:100%;min-width:0;flex:1 1 140px}
+  .team-table .move-team-option{white-space:normal}
+  .team-table-wrap .team-table{table-layout:auto}
 }
 </style>
 </head>
@@ -1160,7 +1204,7 @@ th{
       <select id="sellerRole" aria-label="Perfil da equipe">
         <option value="VENDEDOR">Vendedor</option>
         <option value="SUPERVISOR">Supervisor</option>
-        <option value="EXECUTIVO">Executivo / Coordenador</option>
+        <option value="EXECUTIVO">Executivo Coordenador</option>
       </select>
       <input id="sellerName" placeholder="Nome completo" required maxlength="120">
       <input id="sellerEmail" type="email" placeholder="E-mail" required maxlength="254">
@@ -1171,7 +1215,7 @@ th{
       <button id="sellerCreateBtn" class="btn" type="submit" aria-describedby="sellerSetupStatus" disabled>Cadastrar vendedor</button>
     </form>
     <div id="sellerManagementStatus" class="muted" role="status" aria-live="polite"></div>
-    <div style="overflow:auto;margin-top:12px">
+    <div class="team-table-wrap">
       <table class="team-table" style="width:100%;border-collapse:collapse">
         <thead><tr><th>Integrante</th><th>Perfil</th><th>Região</th><th>E-mail</th><th>Telefone</th><th>Estado</th><th>Envios</th><th>Ação</th></tr></thead>
         <tbody id="sellerManagementRows"></tbody>
@@ -1263,7 +1307,7 @@ th{
 
     <div class="table-wrap">
 
-      <table>
+      <table class="lead-table">
 
         <thead>
 
@@ -1744,11 +1788,11 @@ function render() {
     filtered.map(lead =>
       "<tr>" +
 
-        "<td><b>" +
+        "<td data-label=\\\"Cliente\\\"><b>" +
           escapeHtml(lead.name) +
         "</b></td>" +
 
-        "<td>" +
+        "<td data-label=\\\"Telefone\\\" class=\\\"phone-cell\\\">" +
           escapeHtml(
             formatPhone(
               lead.customer_phone
@@ -1756,19 +1800,19 @@ function render() {
           ) +
         "</td>" +
 
-        "<td>" +
+        "<td data-label=\\\"Endereço\\\">" +
           escapeHtml(
             lead.address
           ) +
         "</td>" +
 
-        "<td>" +
+        "<td data-label=\\\"Possui Claro\\\">" +
           escapeHtml(
             lead.has_claro
           ) +
         "</td>" +
 
-        "<td>" +
+        "<td data-label=\\\"Produto de interesse\\\">" +
           "<span class=\\\"pill\\\">" +
             escapeHtml(
               lead.product_searched
@@ -1776,7 +1820,7 @@ function render() {
           "</span>" +
         "</td>" +
 
-        "<td>" +
+        "<td data-label=\\\"Data/Hora\\\">" +
           escapeHtml(
             formatDate(
               lead.created_at
@@ -1784,16 +1828,16 @@ function render() {
           ) +
         "</td>" +
 
-        "<td>" + (canUpdateLeadStatus
+        "<td data-label=\\\"Status\\\">" + (canUpdateLeadStatus
           ? leadStatusSelect(lead)
           : escapeHtml(lead.status)) +
         "</td>" +
 
         (isManager ?
-          "<td>" + escapeHtml(lead.observation) +
+          "<td data-label=\\\"Observação\\\">" + escapeHtml(lead.observation) +
           (lead.observation !== undefined ? '<br><button type="button" data-observation-lead="' +
             escapeHtml(lead.id) + '">Editar observação</button>' : "") + "</td>" +
-          "<td>" + escapeHtml(lead.crm_external_id) + "</td>" : "") +
+          "<td data-label=\\\"ID no CRM\\\">" + escapeHtml(lead.crm_external_id) + "</td>" : "") +
 
       "</tr>"
     ).join("");
@@ -2177,7 +2221,7 @@ async function showApp() {
   $("scope").textContent =
     "Usuário: " +
     user.email +
-    (leaderRole ? " · Perfil " + (leaderRole === "EXECUTIVO" ? "Executivo / Coordenador" : leaderRole.toLowerCase()) : " · Acesso controlado pelo RLS do Supabase");
+    (leaderRole ? " · Perfil " + (leaderRole === "EXECUTIVO" ? "Executivo Coordenador" : leaderRole.toLowerCase()) : " · Acesso controlado pelo RLS do Supabase");
 
 
   await loadLeads();
@@ -2221,7 +2265,7 @@ async function loadSellerManagement() {
     $("sellerCreateBtn").disabled = !payload.readiness?.ready;
     const roleSelect = $("sellerRole");
     const roleOptions = payload.role === "GERENTE"
-      ? [["VENDEDOR", "Vendedor"], ["SUPERVISOR", "Supervisor"], ["EXECUTIVO", "Executivo / Coordenador"]]
+      ? [["VENDEDOR", "Vendedor"], ["SUPERVISOR", "Supervisor"], ["EXECUTIVO", "Executivo Coordenador"]]
       : payload.role === "EXECUTIVO"
         ? [["VENDEDOR", "Vendedor"], ["SUPERVISOR", "Supervisor"]]
         : [["VENDEDOR", "Vendedor"]];
@@ -2242,29 +2286,35 @@ async function loadSellerManagement() {
       const delivery = seller.onboarding
         ? "E-mail: " + emailLabel + " · WhatsApp: " + (emailStatus === "sent" ? "manual (sem custo)" : "após confirmar o e-mail")
         : "Sem controle de envio";
-      const name = document.createElement("td"); name.textContent = seller.name;
-      const role = document.createElement("td"); role.textContent = seller.role === "EXECUTIVO" ? "Executivo / Coordenador" : seller.role === "SUPERVISOR" ? "Supervisor" : "Vendedor";
-      const region = document.createElement("td"); region.textContent = seller.region || "—";
-      const email = document.createElement("td"); email.textContent = seller.email || "—";
-      const phone = document.createElement("td"); phone.textContent = seller.phone ? formatPhone(seller.phone) : "—";
-      const active = document.createElement("td"); active.textContent = state;
-      const sends = document.createElement("td"); sends.textContent = delivery;
+      const name = document.createElement("td"); name.dataset.label = "Integrante"; name.textContent = seller.name;
+      const role = document.createElement("td"); role.dataset.label = "Perfil"; role.textContent = seller.role === "EXECUTIVO" ? "Executivo Coordenador" : seller.role === "SUPERVISOR" ? "Supervisor" : "Vendedor";
+      const region = document.createElement("td"); region.dataset.label = "Região"; region.textContent = seller.region || "—";
+      const email = document.createElement("td"); email.dataset.label = "E-mail"; email.textContent = seller.email || "—";
+      const phone = document.createElement("td"); phone.dataset.label = "Telefone"; phone.className = "phone-cell"; phone.textContent = seller.phone ? formatPhone(seller.phone) : "—";
+      const active = document.createElement("td"); active.dataset.label = "Estado"; active.textContent = state;
+      const sends = document.createElement("td"); sends.dataset.label = "Envios"; sends.textContent = delivery;
       const actionCell = document.createElement("td");
+      actionCell.dataset.label = "Ação";
       actionCell.className = "team-actions";
       if (seller.role === "VENDEDOR" || (payload.role === "GERENTE" && ["EXECUTIVO", "SUPERVISOR"].includes(seller.role))) {
-        const action = document.createElement("button"); action.type = "button"; action.className = "btn secondary";
-        action.textContent = seller.active ? "Desligar" : "Reativar";
+        const action = document.createElement("button"); action.type = "button"; action.className = "btn secondary icon-button" + (seller.active ? " danger-icon" : " success-icon");
+        action.textContent = seller.active ? "×" : "✓";
+        action.setAttribute("aria-label", (seller.active ? "Desligar " : "Reativar ") + seller.name);
+        action.title = seller.active ? "Desligar" : "Reativar";
         action.addEventListener("click", () => setSellerActive(seller, !seller.active));
         actionCell.append(action);
       }
       if (seller.onboarding && seller.onboarding.email_status !== "sent") {
-        const retry = document.createElement("button"); retry.type = "button"; retry.className = "btn secondary"; retry.style.marginLeft = "6px"; retry.textContent = "Reenviar e-mail";
+        const retry = document.createElement("button"); retry.type = "button"; retry.className = "btn secondary icon-button"; retry.style.marginLeft = "6px"; retry.textContent = "↻";
+        retry.setAttribute("aria-label", "Reenviar convite por e-mail para " + seller.name); retry.title = "Reenviar e-mail";
         retry.addEventListener("click", () => retrySellerDelivery(seller)); actionCell.append(retry);
       }
       if (seller.onboarding && seller.onboarding.email_status === "sent" && seller.phone) {
         const qrUrl = new URL("/", QR_PRODUCTION_ORIGIN); qrUrl.searchParams.set("vendedor", seller.id);
-        const whatsapp = document.createElement("a"); whatsapp.className = "btn secondary"; whatsapp.style.marginLeft = "6px";
-        whatsapp.textContent = "Abrir WhatsApp"; whatsapp.href = buildWhatsappInviteUrl(seller.phone, seller.name, qrUrl.href);
+        const whatsapp = document.createElement("a"); whatsapp.className = "btn secondary icon-button whatsapp-icon"; whatsapp.style.marginLeft = "6px";
+        whatsapp.innerHTML = '<svg viewBox="0 0 32 32" aria-hidden="true"><path d="M16 3a12 12 0 0 0-10.3 18.2L4 28l7-1.8A12 12 0 1 0 16 3Z"/><path d="M12.2 10.2c-.3-.7-.7-.7-1-.7h-.8c-.3 0-.7.1-1 .5s-1.3 1.3-1.3 3.1 1.3 3.5 1.5 3.7 2.6 4.1 6.4 5.5c3.1 1.2 3.8 1 4.5.9s2.2-.9 2.5-1.8.3-1.7.2-1.8-.3-.3-.7-.5l-2.4-1.2c-.3-.1-.6-.2-.8.2s-.9 1.2-1.1 1.4-.4.3-.7.1a9.8 9.8 0 0 1-2.9-1.8 11 11 0 0 1-2-2.5c-.2-.3 0-.5.1-.7l.5-.6.4-.6c.1-.2 0-.5 0-.6s-.8-2-1.1-2.6Z"/></svg>';
+        whatsapp.setAttribute("aria-label", "Abrir WhatsApp para " + seller.name); whatsapp.title = "Abrir WhatsApp";
+        whatsapp.href = buildWhatsappInviteUrl(seller.phone, seller.name, qrUrl.href);
         whatsapp.target = "_blank"; whatsapp.rel = "noopener noreferrer"; actionCell.append(whatsapp);
       }
       if (seller.role === "SUPERVISOR" && payload.role === "GERENTE" || seller.role === "VENDEDOR") {
@@ -2316,8 +2366,8 @@ function appendTransferControls(actionCell, seller, payload) {
   moveTeamLabel.append(moveTeam, document.createTextNode("Levar vendedores da equipe"));
   if (seller.role === "SUPERVISOR") group.append(select, moveTeamLabel);
   else group.append(select);
-  const transfer = document.createElement("button"); transfer.type = "button"; transfer.className = "btn secondary";
-  transfer.textContent = "Transferir";
+  const transfer = document.createElement("button"); transfer.type = "button"; transfer.className = "btn secondary icon-button transfer-icon";
+  transfer.textContent = "⇄"; transfer.setAttribute("aria-label", "Transferir " + seller.name); transfer.title = "Transferir";
   transfer.addEventListener("click", () => submitSellerTransfer(seller, select, moveTeam));
   group.append(transfer);
   actionCell.append(group);
@@ -2638,7 +2688,7 @@ $("exportMailingBtn").addEventListener("click", () => {
   }
   const rows = [["Integrante", "Perfil", "Região", "E-mail", "Telefone", "Estado"], ...sellers.map(seller => [
     seller.name,
-    seller.role === "EXECUTIVO" ? "Executivo / Coordenador" : seller.role === "SUPERVISOR" ? "Supervisor" : "Vendedor",
+    seller.role === "EXECUTIVO" ? "Executivo Coordenador" : seller.role === "SUPERVISOR" ? "Supervisor" : "Vendedor",
     seller.region,
     seller.email,
     seller.phone,
