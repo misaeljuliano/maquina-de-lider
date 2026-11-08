@@ -913,26 +913,27 @@ body{
 }
 
 .team-table .btn{
-  padding:5px 7px;
-  border-radius:7px;
-  font-size:10px;
+  padding:3px 5px;
+  border-radius:6px;
+  font-size:9px;
   line-height:1.2
 }
 
 .team-table th:nth-child(7),
 .team-table td:nth-child(7){width:275px}
 
-.team-table .team-actions{gap:4px;min-width:0}
-.team-table .transfer-controls{flex:1 1 auto;gap:4px;min-width:0}
-.team-table .transfer-controls select{width:100%;max-width:none;flex:1 1 0}
-.team-table{table-layout:auto}
+.team-table .team-actions{gap:3px;min-width:0;white-space:nowrap}
+.team-table .transfer-controls{flex:0 0 auto;gap:3px;min-width:0}
+.team-table .transfer-controls select{flex:0 0 96px;width:96px;min-width:96px;max-width:96px;padding:3px 4px;font-size:11px}
+.team-table{table-layout:fixed}
 .team-table th:nth-child(1),.team-table td:nth-child(1){width:15%}
-.team-table th:nth-child(2),.team-table td:nth-child(2){width:13%}
+.team-table th:nth-child(2),.team-table td:nth-child(2){width:12%}
 .team-table th:nth-child(3),.team-table td:nth-child(3){width:7%}
-.team-table th:nth-child(4),.team-table td:nth-child(4){width:18%}
+.team-table th:nth-child(4),.team-table td:nth-child(4){width:20%}
 .team-table th:nth-child(5),.team-table td:nth-child(5){width:12%}
 .team-table th:nth-child(6),.team-table td:nth-child(6){width:7%}
-.team-table th:nth-child(7),.team-table td:nth-child(7){width:28%}
+.team-table th:nth-child(7),.team-table td:nth-child(7){width:27%}
+.team-table td{padding:9px 7px}
 
 .icon-button{
   display:inline-flex;
@@ -948,15 +949,16 @@ body{
 
 .danger-icon{background:#fff!important;color:#d50000;border:1px solid #edb5b9}
 .danger-icon:hover:not(:disabled){background:#fff0f1!important}
-.team-table .danger-icon{width:30px;min-width:30px;height:30px;border:0;border-radius:9px;background:#d50000!important;color:#fff!important;font-size:27px;font-weight:500;box-shadow:0 3px 8px rgba(213,0,0,.22)}
-.team-table .danger-icon:hover:not(:disabled){background:#b90000!important;box-shadow:0 4px 10px rgba(185,0,0,.3);transform:translateY(-1px)}
+.team-table .danger-icon{width:25px;min-width:25px;height:25px;border:0;border-radius:7px;background:#c43a40!important;color:#fff!important;font-size:22px;font-weight:500;box-shadow:0 2px 5px rgba(150,35,42,.16)}
+.team-table .danger-icon:hover:not(:disabled){background:#ad3036!important;box-shadow:0 3px 8px rgba(150,35,42,.22);transform:translateY(-1px)}
 .team-table .danger-icon:active{transform:scale(.94)}
 .success-icon{background:#fff!important;color:#238636;border:1px solid #a9d4b1}
 .success-icon:hover:not(:disabled){background:#f1fff4!important}
-.transfer-icon{font-size:21px}
-.whatsapp-icon{background:#25d366!important;color:#fff!important;border:0;box-shadow:0 2px 6px rgba(37,211,102,.24)}
-.whatsapp-icon:hover:not(:disabled){background:#1eae54!important;box-shadow:0 3px 8px rgba(30,174,84,.3);transform:translateY(-1px)}
-.whatsapp-icon svg{display:block;width:18px;height:18px}
+.team-table .icon-button{width:25px;min-width:25px;height:25px;font-size:17px}
+.transfer-icon{font-size:18px}
+.whatsapp-icon{background:#31bd68!important;color:#fff!important;border:0;box-shadow:0 2px 5px rgba(35,145,78,.18)}
+.whatsapp-icon:hover:not(:disabled){background:#279f57!important;box-shadow:0 3px 7px rgba(35,145,78,.24);transform:translateY(-1px)}
+.whatsapp-icon svg{display:block;width:16px;height:16px}
 .whatsapp-icon svg path:first-child{fill:none;stroke:currentColor;stroke-width:1.8;stroke-linejoin:round}
 .whatsapp-icon svg path:last-child{fill:currentColor;stroke:none}
 
@@ -965,9 +967,9 @@ body{
   align-items:center;
   gap:6px;
   color:#444;
-  font-size:12px;
+  font-size:11px;
   line-height:1.2;
-  white-space:normal;
+  white-space:nowrap;
   flex:0 0 auto
 }
 
@@ -1099,9 +1101,9 @@ th{
   .table-wrap tbody td.empty{display:block;padding:20px;border:0}
   .team-table-wrap tbody td.team-actions{display:flex;grid-column:1/-1;align-items:center;flex-wrap:wrap}
   .team-table-wrap .team-actions::before{display:block;flex:0 0 100%;margin-bottom:5px}
-  .team-table .team-actions,.team-table .transfer-controls{gap:4px;flex-wrap:nowrap}
-  .team-table .transfer-controls{flex:1 1 90px;width:auto;min-width:0}
-  .team-table .transfer-controls select{width:100%;max-width:none;min-width:0;flex:1 1 0}
+  .team-table .team-actions,.team-table .transfer-controls{gap:3px;flex-wrap:nowrap}
+  .team-table .transfer-controls{flex:0 0 auto;width:auto;min-width:0}
+  .team-table .transfer-controls select{flex:0 0 96px;width:96px;max-width:96px;min-width:96px}
   .team-table .move-team-option{white-space:normal}
   .team-table-wrap .team-table{table-layout:auto}
 }
@@ -2404,7 +2406,7 @@ function appendTransferControls(actionCell, seller, payload) {
   const add = (label, value, selected = false) => {
     const option = new Option(label, value); option.selected = selected; select.add(option);
   };
-  add("Transferir para…", "");
+  add("Transferir…", "");
   if (seller.role === "SUPERVISOR") {
     add("Sem executivo", "manager");
     (payload.assignableExecutives || []).forEach(item => add("Executivo: " + item.label, "executive:" + item.id));

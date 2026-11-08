@@ -66,12 +66,13 @@ test("wallet preview embeds only its configured public Supabase credentials", as
   assert.match(html, /\.table-wrap\s*\{\s*max-width:100%/s);
   assert.match(html, /\.table-wrap tbody tr,.team-table-wrap tbody tr\{display:block/);
   assert.match(html, /\.icon-button\{/);
-  assert.match(html, /\.team-table \.danger-icon\{[^}]*font-size:27px/s);
-  assert.match(html, /\.team-table td:nth-child\(7\)\{width:275px\}/);
-  assert.match(html, /\.team-table \.transfer-controls select\{width:100%;max-width:none;flex:1 1 0\}/);
+  assert.match(html, /\.team-table \.danger-icon\{[^}]*font-size:22px/s);
+  assert.match(html, /\.team-table td:nth-child\(7\)\{width:27%\}/);
+  assert.match(html, /\.team-table \.transfer-controls select\{flex:0 0 96px;width:96px;min-width:96px;max-width:96px/);
   assert.match(html, /<input id="sellerPhone" type="tel" class="seller-phone-field" placeholder="WhatsApp" aria-label="WhatsApp" required>/);
   assert.doesNotMatch(html, /<th>Envios<\/th>/);
-  assert.match(html, /\.whatsapp-icon\{background:#25d366!important;color:#fff!important/);
+  assert.match(html, /\.whatsapp-icon\{background:#31bd68!important;color:#fff!important/);
+  assert.match(html, /document\.createTextNode\("Levar equipe junto"\)/);
   assert.match(html, /aria-label", "Transferir " \+ seller\.name/);
   assert.match(html, /aria-label", "Abrir WhatsApp para " \+ seller\.name/);
   assert.doesNotMatch(html, /min-width:\s*900px/);
