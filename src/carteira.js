@@ -840,19 +840,24 @@ body{
 .filters{
   display:grid;
   grid-template-columns:2fr 1fr 1fr;
-  gap:10px;
-  margin-top:16px
+  gap:8px;
+  min-width:0
 }
 
 .filters input,
 .filters select{
-  min-height:48px;
-  padding:12px 14px;
+  min-width:0;
+  min-height:40px;
+  padding:8px 10px;
   border:1px solid #cfd2d8;
-  border-radius:11px;
-  font-size:14px;
+  border-radius:9px;
+  font-size:13px;
   background:#fff
 }
+
+.lead-toolbar{display:grid;grid-template-columns:minmax(0,3fr) minmax(330px,1.5fr);align-items:center;gap:10px;margin:14px 0}
+.lead-toolbar .export-actions{display:flex;justify-content:flex-end;align-items:center;gap:6px;flex-wrap:nowrap;min-width:0}
+.lead-toolbar .btn{padding:7px 9px;border-radius:8px;font-size:11px}
 
 .seller-form{
   display:flex;
@@ -974,6 +979,8 @@ body{
 }
 
 .move-team-option input{accent-color:#d50000;margin:0;width:16px;height:16px;flex:0 0 16px}
+.move-team-symbol{display:inline-flex;align-items:center;color:#555}
+.move-team-symbol svg{display:block;width:15px;height:15px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
 
 .table-wrap{
   max-width:100%;
@@ -1112,6 +1119,8 @@ th{
   .seller-form{flex-wrap:wrap}
   .seller-form>input:not(#sellerPhone),.seller-form>select{flex:1 1 155px;width:auto}
   .seller-form>#sellerPhone{flex:0 1 112px;width:112px}
+  .lead-toolbar{grid-template-columns:1fr}
+  .lead-toolbar .export-actions{justify-content:flex-start;flex-wrap:wrap}
 }
 </style>
 </head>
@@ -1295,72 +1304,33 @@ th{
     style="margin-top:18px"
   >
 
-    <div class="export-actions" style="display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap;margin-bottom:14px">
-      <button id="exportMailingBtn" class="btn secondary hidden" type="button">Exportar mailing da equipe (Excel)</button>
-      <button id="exportLeadsBtn" class="btn secondary" type="button">Exportar clientes (Excel)</button>
-    </div>
-
+    <div class="lead-toolbar">
     <div class="filters">
-
-      <input
-        id="search"
-        placeholder="Buscar cliente, telefone ou endereço"
-      >
-
+      <input id="search" placeholder="Buscar cliente, telefone ou endereço">
       <select id="product">
-
-        <option value="">
-          Todos os produtos
-        </option>
-
+        <option value="">Todos os produtos</option>
         <option>Internet</option>
         <option>Celular</option>
         <option>TV</option>
         <option>Combo</option>
-
       </select>
-
-
       <select id="status">
-
-        <option value="">
-          Todos os status
-        </option>
-
-        <option value="NOVO">
-          NOVO
-        </option>
-
-        <option value="CONTATO_REALIZADO">
-          CONTATO REALIZADO
-        </option>
-
-        <option value="PROPOSTA">
-          PROPOSTA
-        </option>
-
-        <option value="NEGOCIACAO">
-          NEGOCIAÇÃO
-        </option>
-
-        <option value="VENDA">
-          VENDA
-        </option>
-
-        <option value="PENDENTE_INSTALACAO">
-          PENDENTE DE INSTALAÇÃO
-        </option>
-
-        <option value="CONECTADO">
-          CONECTADO
-        </option>
-
-        <option value="NAO_VENDA">
-          NÃO VENDA
-        </option>
-
+        <option value="">Todos os status</option>
+        <option value="NOVO">NOVO</option>
+        <option value="CONTATO_REALIZADO">CONTATO REALIZADO</option>
+        <option value="PROPOSTA">PROPOSTA</option>
+        <option value="NEGOCIACAO">NEGOCIAÇÃO</option>
+        <option value="VENDA">VENDA</option>
+        <option value="PENDENTE_INSTALACAO">PENDENTE DE INSTALAÇÃO</option>
+        <option value="CONECTADO">CONECTADO</option>
+        <option value="NAO_VENDA">NÃO VENDA</option>
       </select>
+    </div>
 
+    <div class="export-actions">
+      <button id="exportMailingBtn" class="btn secondary hidden" type="button">Exportar mailing da equipe (Excel)</button>
+      <button id="exportLeadsBtn" class="btn secondary" type="button">Exportar clientes (Excel)</button>
+    </div>
     </div>
 
     <div
@@ -2427,13 +2397,14 @@ function appendTransferControls(actionCell, seller, payload) {
   if (seller.role === "SUPERVISOR") {
     moveTeamLabel.title = "Levar os vendedores da equipe junto com o supervisor";
     moveTeamLabel.setAttribute("aria-label", "Levar vendedores da equipe junto com o supervisor");
-    moveTeamLabel.append(moveTeam, document.createTextNode("Levar equipe junto"));
+    const teamSymbol = document.createElement("span"); teamSymbol.className = "move-team-symbol"; teamSymbol.setAttribute("aria-hidden", "true");
+    teamSymbol.innerHTML = '<svg viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="10" cy="7" r="4"/><path d="M20 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>';
+    moveTeamLabel.append(moveTeam, teamSymbol, document.createTextNode("Levar equipe junto"));
   }
-  group.append(select);
   const transfer = document.createElement("button"); transfer.type = "button"; transfer.className = "btn secondary icon-button transfer-icon";
   transfer.textContent = "⇄"; transfer.setAttribute("aria-label", "Transferir " + seller.name); transfer.title = "Transferir";
   transfer.addEventListener("click", () => submitSellerTransfer(seller, select, moveTeam));
-  group.append(transfer);
+  group.append(transfer, select);
   actionCell.append(group);
   if (seller.role === "SUPERVISOR") actionCell.append(moveTeamLabel);
 }
