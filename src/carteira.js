@@ -928,13 +928,13 @@ body{
   line-height:1.2
 }
 
-.team-table .team-actions{gap:4px;min-width:0;white-space:nowrap;overflow:visible;justify-content:flex-end}
+.team-table .team-actions{gap:4px;min-width:0;white-space:nowrap;overflow:visible;justify-content:flex-start}
 .team-table .transfer-controls{flex:0 0 auto;gap:3px;min-width:0}
 .team-table .transfer-controls select{flex:0 0 96px;width:96px;min-width:96px;max-width:96px;padding:3px 4px;font-size:11px}
 .team-table{table-layout:auto}
 .team-table th,.team-table td{white-space:nowrap}
 .team-table td:nth-child(2){white-space:normal}
-.team-table th:nth-child(7),.team-table td:nth-child(7){text-align:right}
+.team-table th:nth-child(7),.team-table td:nth-child(7){text-align:left}
 .team-table-wrap{width:100%;min-width:0}
 .team-table{display:table;width:100%!important;min-width:100%;table-layout:auto}
 .team-table th,.team-table td{min-width:0}
