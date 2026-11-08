@@ -62,6 +62,8 @@ test("wallet preview embeds only its configured public Supabase credentials", as
   assert.match(html, /https:\/\/wallet-staging\.example\.test/);
   assert.match(html, /<option value="PENDENTE_INSTALACAO">/);
   assert.match(html, /<option value="CONECTADO">/);
+  assert.match(html, /th,td\s*\{[^}]*white-space:\s*nowrap/s);
+  assert.match(html, /\.table-wrap\s*\{\s*overflow:auto/s);
   assert.doesNotMatch(html, /xmipdjjdtruutcumhrzb|test-service-secret/);
 });
 

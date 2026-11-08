@@ -877,6 +877,11 @@ body{
   min-width:390px
 }
 
+.team-table .team-actions,
+.team-table .transfer-controls{
+  flex-wrap:nowrap
+}
+
 .team-table .btn{
   padding:8px 12px;
   border-radius:9px;
@@ -910,7 +915,8 @@ th,td{
   border-bottom:1px solid #e9ebef;
   text-align:left;
   font-size:13px;
-  vertical-align:top
+  vertical-align:top;
+  white-space:nowrap
 }
 
 th{
