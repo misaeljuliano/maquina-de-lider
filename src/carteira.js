@@ -2428,7 +2428,6 @@ function appendTransferControls(actionCell, seller, payload) {
     moveTeamLabel.title = "Levar os vendedores da equipe junto com o supervisor";
     moveTeamLabel.setAttribute("aria-label", "Levar vendedores da equipe junto com o supervisor");
     moveTeamLabel.append(moveTeam, document.createTextNode("Levar equipe junto"));
-    actionCell.append(moveTeamLabel);
   }
   group.append(select);
   const transfer = document.createElement("button"); transfer.type = "button"; transfer.className = "btn secondary icon-button transfer-icon";
@@ -2436,6 +2435,7 @@ function appendTransferControls(actionCell, seller, payload) {
   transfer.addEventListener("click", () => submitSellerTransfer(seller, select, moveTeam));
   group.append(transfer);
   actionCell.append(group);
+  if (seller.role === "SUPERVISOR") actionCell.append(moveTeamLabel);
 }
 
 async function submitSellerTransfer(seller, select, moveTeam) {

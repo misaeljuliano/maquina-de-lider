@@ -73,6 +73,7 @@ test("wallet preview embeds only its configured public Supabase credentials", as
   assert.doesNotMatch(html, /<th>Envios<\/th>/);
   assert.match(html, /\.whatsapp-icon\{background:#31bd68!important;color:#fff!important/);
   assert.match(html, /document\.createTextNode\("Levar equipe junto"\)/);
+  assert.match(html, /actionCell\.append\(group\);\s*if \(seller\.role === "SUPERVISOR"\) actionCell\.append\(moveTeamLabel\);/);
   assert.match(html, /aria-label", "Transferir " \+ seller\.name/);
   assert.match(html, /aria-label", "Abrir WhatsApp para " \+ seller\.name/);
   assert.doesNotMatch(html, /min-width:\s*900px/);
