@@ -38,6 +38,9 @@ async function exerciseLeaderScope(t, role) {
     requests.push({ url, method: init.method || "GET" });
     if (url.hostname !== "staging.supabase.co") throw new Error("Unexpected host " + url.hostname);
     if (url.pathname === "/auth/v1/user") return Response.json({ id: leaderId });
+    if (url.pathname === "/auth/v1/admin/users") {
+      return Response.json([{ id: ownSeller.seller_user_id, email: "seller@example.test" }]);
+    }
     if (url.pathname === "/rest/v1/user_roles") {
       const userFilter = url.searchParams.get("user_id") || "";
       if (userFilter.startsWith("eq.")) {
@@ -89,6 +92,7 @@ async function exerciseLeaderScope(t, role) {
   assert.equal(getResponse.status, 200);
   const team = await getResponse.json();
   assert.deepEqual(team.sellers.map(seller => seller.id), [ownSellerId]);
+  assert.equal(team.sellers[0].email, "seller@example.test");
   assert.ok(requests.some(({ url }) =>
     url.searchParams.get(role === "EXECUTIVO" ? "executive_user_id" : "supervisor_user_id") === "eq." + leaderId
   ));

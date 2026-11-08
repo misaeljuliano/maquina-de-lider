@@ -233,6 +233,19 @@ async function getAdminUserLabel(env, userId) {
   return result.data?.user_metadata?.name || "Usuário " + userId.slice(0, 8);
 }
 
+async function getAdminUserEmails(env, userIds) {
+  const wanted = new Set(userIds.filter(id => SELLER_ID_RE.test(id || "")));
+  if (!wanted.size) return new Map();
+  const result = await serviceRequest(env, "/auth/v1/admin/users?page=1&per_page=1000");
+  if (!result.ok) return null;
+  const users = Array.isArray(result.data?.users)
+    ? result.data.users
+    : Array.isArray(result.data) ? result.data : [];
+  return new Map(users
+    .filter(user => wanted.has(user.id))
+    .map(user => [user.id, String(user.email || "")]));
+}
+
 async function getSellerRoles(env, userIds) {
   const ids = [...new Set(userIds.filter(id => SELLER_ID_RE.test(id || "")))];
   if (!ids.length) return {};
@@ -355,6 +368,8 @@ async function leaderSellersApi(request, env, url) {
     const sellers = await getTeamRows(env, leader);
     if (!sellers) return jsonResponse({ error: "Não foi possível carregar sua equipe." }, 503);
     const onboarding = await getOnboardingMap(env, sellers);
+    const emails = await getAdminUserEmails(env, sellers.map(item => item.seller_user_id));
+    if (!emails) return jsonResponse({ error: "Não foi possível carregar os contatos da equipe." }, 503);
     const leaderProfile = leader.role === "SUPERVISOR" ? await getLeaderProfile(env, leader.user.id) : null;
     const roleMap = await getSellerRoles(env, [
       ...sellers.map(item => item.seller_user_id),
@@ -384,6 +399,7 @@ async function leaderSellersApi(request, env, url) {
       assignableSupervisors: supervisorLabels.filter(([, label]) => label).map(([id, label]) => ({ id, label })),
       sellers: sellers.map(seller => ({
         ...seller,
+        email: emails.get(seller.seller_user_id) || "",
         role: seller.seller_user_id ? roleMap[seller.seller_user_id] || "SEM PERFIL" : "VENDEDOR",
         onboarding: onboarding.get(seller.id) || null
       }))
@@ -1134,7 +1150,7 @@ th{
     <div id="sellerManagementStatus" class="muted" role="status" aria-live="polite"></div>
     <div style="overflow:auto;margin-top:12px">
       <table style="width:100%;border-collapse:collapse">
-        <thead><tr><th>Integrante</th><th>Perfil</th><th>Região</th><th>Estado</th><th>Envios</th><th>Ação</th></tr></thead>
+        <thead><tr><th>Integrante</th><th>Perfil</th><th>Região</th><th>E-mail</th><th>Telefone</th><th>Estado</th><th>Envios</th><th>Ação</th></tr></thead>
         <tbody id="sellerManagementRows"></tbody>
       </table>
     </div>
@@ -1145,6 +1161,11 @@ th{
     class="card"
     style="margin-top:18px"
   >
+
+    <div class="export-actions" style="display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap;margin-bottom:14px">
+      <button id="exportMailingBtn" class="btn secondary hidden" type="button">Exportar mailing da equipe (Excel)</button>
+      <button id="exportLeadsBtn" class="btn secondary" type="button">Exportar clientes (Excel)</button>
+    </div>
 
     <div class="filters">
 
@@ -1284,6 +1305,7 @@ const client = createClient(
 
 let leads = [];
 let isManager = false;
+let canUpdateLeadStatus = false;
 let editingObservation = null;
 let leaderRole = "";
 let sellerTeamData = null;
@@ -1292,6 +1314,14 @@ let sellerAccessGuardBusy = false;
 let sellerAccessVisibilityHandler = null;
 let sellerAccessFocusHandler = null;
 const QR_PRODUCTION_ORIGIN = ${JSON.stringify(publicOrigin)};
+const LEAD_STATUS_OPTIONS = [
+  ["NOVO", "NOVO"],
+  ["CONTATO_REALIZADO", "CONTATO REALIZADO"],
+  ["PROPOSTA", "PROPOSTA"],
+  ["NEGOCIACAO", "NEGOCIAÇÃO"],
+  ["VENDA", "VENDA"],
+  ["NAO_VENDA", "NÃO VENDA"]
+];
 
 
 const $ = id =>
@@ -1387,6 +1417,111 @@ function formatDate(value) {
       }
     );
 
+}
+
+function visibleLeads() {
+  const query = $("search").value.trim().toLowerCase();
+  const product = $("product").value;
+  const status = $("status").value;
+  return leads.filter(lead => {
+    const matchesSearch = !query || [lead.name, lead.customer_phone, lead.address]
+      .some(value => String(value ?? "").toLowerCase().includes(query));
+    return matchesSearch && (!product || lead.product_searched === product)
+      && (!status || lead.status === status);
+  });
+}
+
+function xmlSafe(value) {
+  const clean = Array.from(String(value ?? ""))
+    .filter(character => {
+      const code = character.charCodeAt(0);
+      return code === 9 || code === 10 || code === 13 || code >= 32;
+    }).join("");
+  return escapeHtml(clean);
+}
+
+function excelColumn(index) {
+  let number = index + 1;
+  let label = "";
+  while (number > 0) {
+    const digit = (number - 1) % 26;
+    label = String.fromCharCode(65 + digit) + label;
+    number = Math.floor((number - 1) / 26);
+  }
+  return label;
+}
+
+function createXlsx(rows, sheetName) {
+  const encoder = new TextEncoder();
+  const xmlRows = rows.map((row, rowIndex) => {
+    const rowNumber = rowIndex + 1;
+    const cells = row.map((value, columnIndex) => {
+      const reference = excelColumn(columnIndex) + rowNumber;
+      return '<c r="' + reference + '" t="inlineStr"><is><t xml:space="preserve">'
+        + xmlSafe(value) + '</t></is></c>';
+    }).join("");
+    return '<row r="' + rowNumber + '">' + cells + '</row>';
+  }).join("");
+  const files = [
+    ["[Content_Types].xml", '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/></Types>'],
+    ["_rels/.rels", '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>'],
+    ["xl/workbook.xml", '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="' + xmlSafe(sheetName) + '" sheetId="1" r:id="rId1"/></sheets></workbook>'],
+    ["xl/_rels/workbook.xml.rels", '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/></Relationships>'],
+    ["xl/worksheets/sheet1.xml", '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>' + xmlRows + '</sheetData></worksheet>']
+  ];
+  const crcTable = new Uint32Array(256);
+  for (let n = 0; n < 256; n++) {
+    let value = n;
+    for (let bit = 0; bit < 8; bit++) value = (value & 1) ? (0xEDB88320 ^ (value >>> 1)) : (value >>> 1);
+    crcTable[n] = value >>> 0;
+  }
+  const crc32 = bytes => {
+    let crc = 0xFFFFFFFF;
+    for (const byte of bytes) crc = crcTable[(crc ^ byte) & 0xFF] ^ (crc >>> 8);
+    return (crc ^ 0xFFFFFFFF) >>> 0;
+  };
+  const write16 = (view, offset, value) => view.setUint16(offset, value, true);
+  const write32 = (view, offset, value) => view.setUint32(offset, value >>> 0, true);
+  const localParts = [];
+  const centralParts = [];
+  let localOffset = 0;
+  for (const [name, xml] of files) {
+    const nameBytes = encoder.encode(name);
+    const data = encoder.encode(xml);
+    const checksum = crc32(data);
+    const local = new Uint8Array(30 + nameBytes.length);
+    const localView = new DataView(local.buffer);
+    write32(localView, 0, 0x04034B50); write16(localView, 4, 20); write16(localView, 6, 0);
+    write16(localView, 8, 0); write16(localView, 10, 0); write16(localView, 12, 0);
+    write32(localView, 14, checksum); write32(localView, 18, data.length); write32(localView, 22, data.length);
+    write16(localView, 26, nameBytes.length); write16(localView, 28, 0); local.set(nameBytes, 30);
+    localParts.push(local, data);
+
+    const central = new Uint8Array(46 + nameBytes.length);
+    const centralView = new DataView(central.buffer);
+    write32(centralView, 0, 0x02014B50); write16(centralView, 4, 20); write16(centralView, 6, 20);
+    write16(centralView, 8, 0); write16(centralView, 10, 0); write16(centralView, 12, 0); write16(centralView, 14, 0);
+    write32(centralView, 16, checksum); write32(centralView, 20, data.length); write32(centralView, 24, data.length);
+    write16(centralView, 28, nameBytes.length); write16(centralView, 30, 0); write16(centralView, 32, 0);
+    write16(centralView, 34, 0); write16(centralView, 36, 0); write32(centralView, 38, 0);
+    write32(centralView, 42, localOffset); central.set(nameBytes, 46); centralParts.push(central);
+    localOffset += local.length + data.length;
+  }
+  const centralSize = centralParts.reduce((sum, part) => sum + part.length, 0);
+  const end = new Uint8Array(22);
+  const endView = new DataView(end.buffer);
+  write32(endView, 0, 0x06054B50); write16(endView, 4, 0); write16(endView, 6, 0);
+  write16(endView, 8, files.length); write16(endView, 10, files.length);
+  write32(endView, 12, centralSize); write32(endView, 16, localOffset); write16(endView, 20, 0);
+  return new Blob([...localParts, ...centralParts, end], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+}
+
+function downloadXlsx(rows, sheetName, filename) {
+  const url = URL.createObjectURL(createXlsx(rows, sheetName));
+  const link = document.createElement("a");
+  link.href = url; link.download = filename;
+  document.body.append(link); link.click(); link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 
@@ -1597,10 +1732,11 @@ function render() {
           ) +
         "</td>" +
 
-        "<td>" +
-          escapeHtml(
-            lead.status
-          ) +
+        "<td>" + (canUpdateLeadStatus
+          ? '<select class="lead-status-select" data-lead-status="' + escapeHtml(lead.id) + '" aria-label="Status de ' + escapeHtml(lead.name) + '">' +
+            LEAD_STATUS_OPTIONS.map(([value, label]) => '<option value="' + value + '"' + (lead.status === value ? " selected" : "") + '>' + label + '</option>').join("") +
+            '</select>'
+          : escapeHtml(lead.status)) +
         "</td>" +
 
         (isManager ?
@@ -1613,6 +1749,31 @@ function render() {
     ).join("");
 
 }
+
+
+$("rows").addEventListener("change", async event => {
+  const select = event.target.closest("[data-lead-status]");
+  if (!canUpdateLeadStatus || !select) return;
+  const lead = leads.find(item => item.id === select.dataset.leadStatus);
+  const previousStatus = lead?.status;
+  const nextStatus = select.value;
+  if (!lead || previousStatus === nextStatus) return;
+  select.disabled = true;
+  try {
+    const { data, error } = await client.from("leads").update({ status: nextStatus })
+      .eq("id", lead.id).select("id").maybeSingle();
+    if (error) throw error;
+    if (!data?.id) throw new Error("Lead não encontrado ou sem permissão para atualizar.");
+    lead.status = nextStatus;
+    render();
+  } catch (error) {
+    select.value = previousStatus;
+    $("message").textContent = "Não foi possível atualizar o status. Tente novamente.";
+    console.error(error);
+  } finally {
+    if (select.isConnected) select.disabled = false;
+  }
+});
 
 
 $("rows").addEventListener("click", event => {
@@ -1927,6 +2088,7 @@ async function showApp() {
 
   const roleRows = roles || [];
   isManager = roleRows.some(role => role.role === "GERENTE");
+  canUpdateLeadStatus = roleRows.some(role => role.role === "VENDEDOR");
   leaderRole = roleRows.map(role => role.role).find(role => ["GERENTE", "EXECUTIVO", "SUPERVISOR"].includes(role)) || "";
 
   if (roleRows.some(role => role.role === "VENDEDOR") || (!isManager && ["EXECUTIVO", "SUPERVISOR"].includes(leaderRole))) {
@@ -1959,12 +2121,13 @@ async function showApp() {
   $("managerCrmHeader").classList.toggle("hidden", !isManager);
   $("managerQrPanel").classList.toggle("hidden", !isManager);
   $("sellerManagementPanel").classList.toggle("hidden", !leaderRole);
+  $("exportMailingBtn").classList.toggle("hidden", !leaderRole);
 
 
   $("scope").textContent =
     "Usuário: " +
     user.email +
-    (leaderRole ? " · Perfil " + leaderRole.toLowerCase() : " · Acesso controlado pelo RLS do Supabase");
+    (leaderRole ? " · Perfil " + (leaderRole === "EXECUTIVO" ? "Executivo / Coordenador" : leaderRole.toLowerCase()) : " · Acesso controlado pelo RLS do Supabase");
 
 
   await loadLeads();
@@ -2032,6 +2195,8 @@ async function loadSellerManagement() {
       const name = document.createElement("td"); name.textContent = seller.name;
       const role = document.createElement("td"); role.textContent = seller.role === "EXECUTIVO" ? "Executivo / Coordenador" : seller.role === "SUPERVISOR" ? "Supervisor" : "Vendedor";
       const region = document.createElement("td"); region.textContent = seller.region || "—";
+      const email = document.createElement("td"); email.textContent = seller.email || "—";
+      const phone = document.createElement("td"); phone.textContent = seller.phone ? formatPhone(seller.phone) : "—";
       const active = document.createElement("td"); active.textContent = state;
       const sends = document.createElement("td"); sends.textContent = delivery;
       const actionCell = document.createElement("td");
@@ -2055,7 +2220,7 @@ async function loadSellerManagement() {
       if (seller.role === "SUPERVISOR" && payload.role === "GERENTE" || seller.role === "VENDEDOR") {
         appendTransferControls(actionCell, seller, payload);
       }
-      tr.append(name, role, region, active, sends, actionCell); rows.append(tr);
+      tr.append(name, role, region, email, phone, active, sends, actionCell); rows.append(tr);
     });
   } catch (error) {
     status.textContent = error.message;
@@ -2401,6 +2566,36 @@ $("product")
 
 $("status")
   .onchange = render;
+
+
+$("exportLeadsBtn").addEventListener("click", () => {
+  const headers = ["Cliente", "Telefone", "Endereço", "Possui Claro", "Produto de interesse", "Data/Hora", "Status"];
+  if (isManager) headers.push("Observação", "ID no CRM");
+  const rows = [headers, ...visibleLeads().map(lead => {
+    const row = [lead.name, lead.customer_phone, lead.address, lead.has_claro, lead.product_searched, formatDate(lead.created_at), lead.status];
+    if (isManager) row.push(lead.observation, lead.crm_external_id);
+    return row;
+  })];
+  downloadXlsx(rows, "Clientes", "carteira-clientes.xlsx");
+});
+
+
+$("exportMailingBtn").addEventListener("click", () => {
+  const sellers = sellerTeamData?.sellers || [];
+  if (!leaderRole || !sellerTeamData) {
+    $("sellerSetupStatus").textContent = "Carregue a equipe antes de exportar o mailing.";
+    return;
+  }
+  const rows = [["Integrante", "Perfil", "Região", "E-mail", "Telefone", "Estado"], ...sellers.map(seller => [
+    seller.name,
+    seller.role === "EXECUTIVO" ? "Executivo / Coordenador" : seller.role === "SUPERVISOR" ? "Supervisor" : "Vendedor",
+    seller.region,
+    seller.email,
+    seller.phone,
+    seller.active ? "Ativo" : "Desligado"
+  ])];
+  downloadXlsx(rows, "Equipe", "mailing-equipe.xlsx");
+});
 
 
 $("logoutBtn")
