@@ -763,11 +763,13 @@ body{
   width:fit-content;
   max-width:100%;
   border:0;
-  border-radius:11px;
-  padding:12px 17px;
+  border-radius:9px;
+  padding:9px 12px;
   background:#d50000;
   color:#fff;
   font-weight:800;
+  font-size:13px;
+  white-space:nowrap;
   cursor:pointer;
   transition:transform .15s,background .15s,box-shadow .15s
 }
@@ -855,8 +857,9 @@ body{
 .seller-form{
   display:flex;
   align-items:stretch;
-  gap:10px;
-  flex-wrap:wrap;
+  gap:8px;
+  flex-wrap:nowrap;
+  width:100%;
   margin:14px 0
 }
 
@@ -864,19 +867,20 @@ body{
   flex:0 1 auto;
   min-width:0;
   width:auto;
-  min-height:44px;
-  padding:9px 12px;
+  min-height:40px;
+  padding:7px 10px;
   border:1px solid #cfd2d8;
   border-radius:11px;
-  font-size:14px;
+  font-size:13px;
   background:#fff
 }
-#sellerRole{width:145px}
-#sellerName{width:180px}
-#sellerEmail{width:180px}
-#sellerPhone{width:112px}
-#sellerRegion{width:130px}
-#sellerExecutive,#sellerSupervisor{width:190px}
+#sellerRole{flex:0 1 130px;width:130px}
+#sellerName{flex:0 1 165px;width:165px}
+#sellerEmail{flex:0 1 165px;width:165px}
+#sellerPhone{flex:0 1 112px;width:112px}
+#sellerRegion{flex:0 1 120px;width:120px}
+#sellerExecutive,#sellerSupervisor{flex:0 1 180px;width:180px}
+.seller-form #sellerCreateBtn{flex:0 0 auto;padding:8px 10px;border-radius:9px;font-size:12px}
 
 .team-actions,.transfer-controls{
   display:flex;
@@ -1090,6 +1094,12 @@ th{
   .team-table .transfer-controls select{width:100%;max-width:none;min-width:0;flex:1 1 0}
   .team-table .move-team-option{white-space:normal}
   .team-table-wrap .team-table{table-layout:auto}
+}
+
+@media(max-width:1100px){
+  .seller-form{flex-wrap:wrap}
+  .seller-form>input:not(#sellerPhone),.seller-form>select{flex:1 1 155px;width:auto}
+  .seller-form>#sellerPhone{flex:0 1 112px;width:112px}
 }
 </style>
 </head>
