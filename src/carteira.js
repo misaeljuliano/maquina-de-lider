@@ -1214,6 +1214,14 @@ th{
           VENDA
         </option>
 
+        <option value="PENDENTE_INSTALACAO">
+          PENDENTE DE INSTALAÇÃO
+        </option>
+
+        <option value="CONECTADO">
+          CONECTADO
+        </option>
+
         <option value="NAO_VENDA">
           NÃO VENDA
         </option>
@@ -1314,12 +1322,22 @@ let sellerAccessGuardBusy = false;
 let sellerAccessVisibilityHandler = null;
 let sellerAccessFocusHandler = null;
 const QR_PRODUCTION_ORIGIN = ${JSON.stringify(publicOrigin)};
+const LEAD_STATUS_LABELS = {
+  NOVO: "NOVO",
+  CONTATO_REALIZADO: "CONTATO REALIZADO",
+  PROPOSTA: "PROPOSTA",
+  NEGOCIACAO: "NEGOCIAÇÃO",
+  VENDA: "VENDA",
+  PENDENTE_INSTALACAO: "PENDENTE DE INSTALAÇÃO",
+  CONECTADO: "CONECTADO",
+  NAO_VENDA: "NÃO VENDA"
+};
 const LEAD_STATUS_OPTIONS = [
-  ["NOVO", "NOVO"],
   ["CONTATO_REALIZADO", "CONTATO REALIZADO"],
   ["PROPOSTA", "PROPOSTA"],
   ["NEGOCIACAO", "NEGOCIAÇÃO"],
-  ["VENDA", "VENDA"],
+  ["PENDENTE_INSTALACAO", "PENDENTE DE INSTALAÇÃO"],
+  ["CONECTADO", "CONECTADO"],
   ["NAO_VENDA", "NÃO VENDA"]
 ];
 
@@ -1342,6 +1360,17 @@ function escapeHtml(value) {
       }[character])
     );
 
+}
+
+
+function leadStatusSelect(lead) {
+  const editable = LEAD_STATUS_OPTIONS.some(([value]) => value === lead.status);
+  const currentStatus = editable ? "" : '<option value="' + escapeHtml(lead.status) + '" selected disabled>' +
+    escapeHtml(LEAD_STATUS_LABELS[lead.status] || lead.status) + '</option>';
+  return '<select class="lead-status-select" data-lead-status="' + escapeHtml(lead.id) + '" aria-label="Status de ' + escapeHtml(lead.name) + '">' +
+    currentStatus +
+    LEAD_STATUS_OPTIONS.map(([value, label]) => '<option value="' + value + '"' + (lead.status === value ? " selected" : "") + '>' + label + '</option>').join("") +
+    '</select>';
 }
 
 
@@ -1662,7 +1691,7 @@ function render() {
   $("vendas").textContent =
     leads.filter(
       lead =>
-        lead.status === "VENDA"
+        ["VENDA", "PENDENTE_INSTALACAO", "CONECTADO"].includes(lead.status)
     ).length;
 
 
@@ -1733,9 +1762,7 @@ function render() {
         "</td>" +
 
         "<td>" + (canUpdateLeadStatus
-          ? '<select class="lead-status-select" data-lead-status="' + escapeHtml(lead.id) + '" aria-label="Status de ' + escapeHtml(lead.name) + '">' +
-            LEAD_STATUS_OPTIONS.map(([value, label]) => '<option value="' + value + '"' + (lead.status === value ? " selected" : "") + '>' + label + '</option>').join("") +
-            '</select>'
+          ? leadStatusSelect(lead)
           : escapeHtml(lead.status)) +
         "</td>" +
 
