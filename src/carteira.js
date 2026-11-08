@@ -675,7 +675,6 @@ html{color-scheme:light}
 body{
   margin:0;
   max-width:100%;
-  overflow-x:hidden;
   background:#f3f4f6;
   font-family:Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;
   color:#17191d;
@@ -938,7 +937,7 @@ body{
 .team-table th:nth-child(7),
 .team-table td:nth-child(7){width:275px}
 
-.team-table .team-actions{gap:3px;min-width:0;white-space:nowrap;overflow:hidden}
+.team-table .team-actions{gap:4px;min-width:0;white-space:nowrap;overflow:visible}
 .team-table .transfer-controls{flex:0 0 auto;gap:3px;min-width:0}
 .team-table .transfer-controls select{flex:0 0 96px;width:96px;min-width:96px;max-width:96px;padding:3px 4px;font-size:11px}
 .team-table{table-layout:fixed}
@@ -949,7 +948,9 @@ body{
 .team-table th:nth-child(5),.team-table td:nth-child(5){width:11%}
 .team-table th:nth-child(6),.team-table td:nth-child(6){width:6%}
 .team-table th:nth-child(7),.team-table td:nth-child(7){width:36%}
-.team-table td{min-width:0;overflow:hidden}
+.team-table-wrap{width:100%;min-width:0}
+.team-table{display:table;width:100%!important;min-width:100%;table-layout:fixed}
+.team-table td{min-width:0}
 .team-table td{padding:9px 7px}
 
 .icon-button{
