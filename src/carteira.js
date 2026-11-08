@@ -858,12 +858,29 @@ body{
 }
 
 .transfer-controls select{
-  min-height:42px;
-  max-width:240px;
-  padding:8px 10px;
+  min-height:36px;
+  max-width:220px;
+  padding:6px 8px;
   border:1px solid #cfd2d8;
   border-radius:9px;
-  background:#fff
+  background:#fff;
+  font-size:13px
+}
+
+.team-table td:nth-child(5),
+.team-table th:nth-child(5){
+  min-width:145px;
+  white-space:nowrap
+}
+
+.team-table td:nth-child(8){
+  min-width:390px
+}
+
+.team-table .btn{
+  padding:8px 12px;
+  border-radius:9px;
+  font-size:12px
 }
 
 .move-team-option{
@@ -1149,7 +1166,7 @@ th{
     </form>
     <div id="sellerManagementStatus" class="muted" role="status" aria-live="polite"></div>
     <div style="overflow:auto;margin-top:12px">
-      <table style="width:100%;border-collapse:collapse">
+      <table class="team-table" style="width:100%;border-collapse:collapse">
         <thead><tr><th>Integrante</th><th>Perfil</th><th>Região</th><th>E-mail</th><th>Telefone</th><th>Estado</th><th>Envios</th><th>Ação</th></tr></thead>
         <tbody id="sellerManagementRows"></tbody>
       </table>
