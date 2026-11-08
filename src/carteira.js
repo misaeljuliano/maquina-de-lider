@@ -668,11 +668,13 @@ function page(config, publicOrigin) {
 
 <style>
 *{box-sizing:border-box}
+:root{--wallet-control-height:40px}
 
 html{color-scheme:light}
 
 body{
   margin:0;
+  max-width:100%;
   background:#f3f4f6;
   font-family:Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;
   color:#17191d;
@@ -746,8 +748,9 @@ body{
 .field input,
 .field select{
   width:100%;
-  min-height:48px;
-  padding:12px 14px;
+  height:var(--wallet-control-height);
+  min-height:var(--wallet-control-height);
+  padding:8px 12px;
   border:1px solid #cfd2d8;
   border-radius:11px;
   font-size:15px;
@@ -760,12 +763,21 @@ body{
 }
 
 .btn{
+  width:fit-content;
+  max-width:100%;
+  height:var(--wallet-control-height);
+  min-height:var(--wallet-control-height);
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
   border:0;
-  border-radius:11px;
-  padding:12px 17px;
+  border-radius:9px;
+  padding:9px 12px;
   background:#d50000;
   color:#fff;
   font-weight:800;
+  font-size:13px;
+  white-space:nowrap;
   cursor:pointer;
   transition:transform .15s,background .15s,box-shadow .15s
 }
@@ -790,6 +802,7 @@ body{
 
 .link-button{
   border:0;
+  min-height:var(--wallet-control-height);
   padding:0;
   margin-top:14px;
   background:transparent;
@@ -835,20 +848,56 @@ body{
 
 .filters{
   display:grid;
-  grid-template-columns:2fr 1fr 1fr;
-  gap:10px;
-  margin-top:16px
+  grid-template-columns:minmax(0,2fr) minmax(0,1fr) minmax(0,1fr);
+  gap:8px;
+  min-width:0
 }
 
 .filters input,
 .filters select{
-  min-height:48px;
-  padding:12px 14px;
+  min-width:0;
+  height:var(--wallet-control-height);
+  min-height:var(--wallet-control-height);
+  padding:8px 10px;
   border:1px solid #cfd2d8;
-  border-radius:11px;
-  font-size:14px;
+  border-radius:9px;
+  font-size:13px;
   background:#fff
 }
+
+.lead-toolbar{display:grid;grid-template-columns:minmax(0,3fr) minmax(0,1.5fr);align-items:center;gap:10px;margin:14px 0;min-width:0;width:100%}
+.lead-toolbar>.filters,.lead-toolbar>.export-actions{min-width:0}
+.lead-toolbar .export-actions{display:flex;justify-content:flex-end;align-items:center;gap:6px;flex-wrap:wrap;min-width:0}
+.lead-toolbar .btn{padding:7px 9px;border-radius:8px;font-size:11px}
+
+.seller-form{
+  display:flex;
+  align-items:stretch;
+  gap:8px;
+  flex-wrap:nowrap;
+  width:100%;
+  margin:14px 0
+}
+
+.seller-form>input,.seller-form>select{
+  flex:0 1 auto;
+  min-width:0;
+  width:auto;
+  height:var(--wallet-control-height);
+  min-height:var(--wallet-control-height);
+  padding:7px 10px;
+  border:1px solid #cfd2d8;
+  border-radius:11px;
+  font-size:13px;
+  background:#fff
+}
+#sellerRole{flex:0 1 130px;width:130px}
+#sellerName{flex:0 1 165px;width:165px}
+#sellerEmail{flex:0 1 165px;width:165px}
+#sellerPhone{flex:0 1 112px;width:112px}
+#sellerRegion{flex:0 1 120px;width:120px}
+#sellerExecutive,#sellerSupervisor{flex:0 1 180px;width:180px}
+.seller-form #sellerCreateBtn{flex:0 0 auto;padding:8px 10px;border-radius:9px;font-size:12px}
 
 .team-actions,.transfer-controls{
   display:flex;
@@ -858,34 +907,109 @@ body{
 }
 
 .transfer-controls select{
-  min-height:42px;
-  max-width:240px;
-  padding:8px 10px;
+  width:150px;
+  min-width:0;
+  max-width:150px;
+  height:var(--wallet-control-height);
+  min-height:var(--wallet-control-height);
+  padding:4px 6px;
   border:1px solid #cfd2d8;
-  border-radius:9px;
-  background:#fff
+  border-radius:8px;
+  background:#fff;
+  font-size:12px
 }
+
+.team-table .team-actions,.team-table .transfer-controls{flex-wrap:nowrap}
+
+.team-table .btn{
+  padding:3px 5px;
+  border-radius:6px;
+  font-size:9px;
+  line-height:1.2
+}
+
+.team-table .team-actions{gap:4px;min-width:0;white-space:nowrap;overflow:visible;justify-content:flex-start}
+.team-table .transfer-controls{flex:0 0 auto;gap:3px;min-width:0}
+.team-table .transfer-controls select{flex:0 0 96px;width:96px;min-width:96px;max-width:96px;padding:3px 4px;font-size:11px}
+.team-table{table-layout:auto}
+.team-table th,.team-table td{white-space:nowrap}
+.team-table td:nth-child(2){white-space:normal}
+.team-table th:nth-child(7),.team-table td:nth-child(7){text-align:left}
+.team-table-wrap{width:100%;min-width:0}
+.team-table{display:table;width:100%!important;min-width:100%;table-layout:auto}
+.team-table th,.team-table td{min-width:0}
+.team-table td{padding:9px 7px}
+
+.icon-button{
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  width:var(--wallet-control-height);
+  min-width:var(--wallet-control-height);
+  height:var(--wallet-control-height);
+  padding:0!important;
+  font-size:19px;
+  line-height:1
+}
+
+.danger-icon{background:#fff!important;color:#d50000;border:1px solid #edb5b9}
+.danger-icon:hover:not(:disabled){background:#fff0f1!important}
+.team-table .danger-icon{width:var(--wallet-control-height);min-width:var(--wallet-control-height);height:var(--wallet-control-height);border:0;border-radius:8px;background:#c43a40!important;color:#fff!important;font-size:24px;font-weight:500;box-shadow:0 2px 5px rgba(150,35,42,.16)}
+.team-table .danger-icon:hover:not(:disabled){background:#ad3036!important;box-shadow:0 3px 8px rgba(150,35,42,.22);transform:translateY(-1px)}
+.team-table .danger-icon:active{transform:scale(.94)}
+.success-icon{background:#fff!important;color:#238636;border:1px solid #a9d4b1}
+.success-icon:hover:not(:disabled){background:#f1fff4!important}
+.team-table .icon-button{width:var(--wallet-control-height);min-width:var(--wallet-control-height);height:var(--wallet-control-height);font-size:19px}
+.transfer-icon{font-size:18px}
+.whatsapp-icon{background:#31bd68!important;color:#fff!important;border:0;box-shadow:0 2px 5px rgba(35,145,78,.18)}
+.whatsapp-icon:hover:not(:disabled){background:#279f57!important;box-shadow:0 3px 7px rgba(35,145,78,.24);transform:translateY(-1px)}
+.whatsapp-icon svg{display:block;width:16px;height:16px}
+.whatsapp-icon svg path:first-child{fill:none;stroke:currentColor;stroke-width:1.8;stroke-linejoin:round}
+.whatsapp-icon svg path:last-child{fill:currentColor;stroke:none}
 
 .move-team-option{
   display:inline-flex;
   align-items:center;
-  gap:6px;
-  color:#444;
-  font-size:13px;
-  white-space:nowrap
+  justify-content:center;
+  width:var(--wallet-control-height);
+  min-width:var(--wallet-control-height);
+  height:var(--wallet-control-height);
+  border:1px solid #d8dbe0;
+  border-radius:8px;
+  background:#fff;
+  color:#555;
+  cursor:pointer;
+  flex:0 0 var(--wallet-control-height)
 }
 
-.move-team-option input{accent-color:#d50000}
+.move-team-option input{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+.move-team-option:has(input:checked){background:#f8e9ea;border-color:#c43a40;color:#a82d34}
+.move-team-option:has(input:focus-visible){outline:3px solid #25282e;outline-offset:2px}
+.move-team-symbol{display:inline-flex;align-items:center;color:#555}
+.move-team-option:has(input:checked) .move-team-symbol{color:#a82d34}
+.move-team-symbol svg{display:block;width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+
+button{min-height:var(--wallet-control-height)}
+.lead-status-select{height:var(--wallet-control-height);min-height:var(--wallet-control-height)}
+[data-observation-lead]{height:var(--wallet-control-height);padding:0 10px}
+.lead-table th,.lead-table td{text-align:left}
+.lead-table [data-observation-lead]{display:inline-flex;align-items:center;justify-content:flex-start;width:max-content;max-width:100%;white-space:nowrap;text-align:left}
 
 .table-wrap{
-  overflow:auto;
+  max-width:100%;
   margin-top:14px
 }
+
+.team-table-wrap{max-width:100%;overflow:visible;margin-top:12px}
+
+.lead-table th:nth-child(2),
+.lead-table td:nth-child(2){width:136px;white-space:nowrap}
 
 table{
   width:100%;
   border-collapse:collapse;
-  min-width:900px
+  min-width:0;
+  table-layout:fixed
 }
 
 th,td{
@@ -893,7 +1017,9 @@ th,td{
   border-bottom:1px solid #e9ebef;
   text-align:left;
   font-size:13px;
-  vertical-align:top
+  vertical-align:top;
+  white-space:normal;
+  overflow-wrap:anywhere
 }
 
 th{
@@ -967,6 +1093,9 @@ th{
     grid-template-columns:1fr
   }
 
+  .seller-form>input:not(#sellerPhone),.seller-form>select{flex:1 1 150px;width:auto}
+  .seller-form>#sellerPhone{flex:0 0 112px;width:112px}
+
   .wrap{
     padding:0 12px
   }
@@ -978,7 +1107,36 @@ th{
 
   .top{padding:16px 18px}
   .wrap{margin:16px auto}
-  .table-wrap{border:1px solid #e8eaee;border-radius:12px}
+  .table-wrap,.team-table-wrap{border:0;border-radius:0;overflow:visible}
+
+  .table-wrap table,.team-table-wrap table{display:block;width:100%;min-width:0}
+  .table-wrap thead,.team-table-wrap thead{display:none}
+  .table-wrap tbody,.team-table-wrap tbody{display:grid;gap:10px;width:100%}
+  .table-wrap tbody tr,.team-table-wrap tbody tr{display:block;width:100%;padding:10px 12px;border:1px solid #e6e8ec;border-radius:12px;background:#fff}
+  .table-wrap tbody td,.team-table-wrap tbody td{display:grid;grid-template-columns:minmax(86px,36%) minmax(0,1fr);gap:8px;width:100%;padding:7px 2px;border-bottom:1px solid #f0f1f3;font-size:12px;overflow-wrap:anywhere}
+  .table-wrap tbody td[data-label]::before,.team-table-wrap tbody td[data-label]::before{content:attr(data-label);font-weight:700;color:#434852;overflow-wrap:normal}
+  .table-wrap tbody td:last-child,.team-table-wrap tbody td:last-child{border-bottom:0}
+  .table-wrap tbody td.phone-cell,.team-table-wrap tbody td.phone-cell{white-space:nowrap}
+  .table-wrap tbody td:nth-child(2),.team-table-wrap tbody td:nth-child(2),.team-table-wrap tbody td:nth-child(5),.team-table-wrap tbody td:nth-child(7){width:100%}
+  .table-wrap tbody td.empty{display:block;padding:20px;border:0}
+  .team-table-wrap tbody td.team-actions{display:flex;grid-column:1/-1;align-items:center;flex-wrap:wrap}
+  .team-table-wrap .team-actions::before{display:block;flex:0 0 100%;margin-bottom:5px}
+  .team-table .team-actions,.team-table .transfer-controls{gap:3px;flex-wrap:nowrap}
+  .team-table .transfer-controls{flex:0 0 auto;width:auto;min-width:0}
+  .team-table .transfer-controls select{flex:0 0 96px;width:96px;max-width:96px;min-width:96px}
+  .team-table .move-team-option{white-space:normal}
+  .team-table-wrap .team-table{table-layout:auto}
+  .team-table .team-actions{flex-wrap:wrap;white-space:normal;overflow:visible}
+  .team-table .transfer-controls{flex-wrap:wrap}
+  .team-table th,.team-table td{white-space:normal}
+}
+
+@media(max-width:1100px){
+  .seller-form{flex-wrap:wrap}
+  .seller-form>input:not(#sellerPhone),.seller-form>select{flex:1 1 155px;width:auto}
+  .seller-form>#sellerPhone{flex:0 1 112px;width:112px}
+  .lead-toolbar{grid-template-columns:1fr}
+  .lead-toolbar .export-actions{justify-content:flex-start;flex-wrap:wrap}
 }
 </style>
 </head>
@@ -1133,24 +1291,24 @@ th{
     <h2 class="h">Equipe</h2>
     <p class="muted">O convite e o QR Code são enviados automaticamente por e-mail. O botão do WhatsApp abre uma mensagem pronta para envio manual, sem cobrança da Meta.</p>
     <p id="sellerSetupStatus" class="muted" role="status" aria-live="polite"></p>
-    <form id="sellerForm" class="filters" style="grid-template-columns:repeat(auto-fit,minmax(190px,1fr));margin:14px 0">
+    <form id="sellerForm" class="seller-form">
       <select id="sellerRole" aria-label="Perfil da equipe">
         <option value="VENDEDOR">Vendedor</option>
         <option value="SUPERVISOR">Supervisor</option>
-        <option value="EXECUTIVO">Executivo / Coordenador</option>
+        <option value="EXECUTIVO">Executivo Coordenador</option>
       </select>
       <input id="sellerName" placeholder="Nome completo" required maxlength="120">
       <input id="sellerEmail" type="email" placeholder="E-mail" required maxlength="254">
-      <input id="sellerPhone" type="tel" placeholder="WhatsApp com DDD (obrigatório)" aria-label="WhatsApp com DDD (obrigatório)" required>
+      <input id="sellerPhone" type="tel" class="seller-phone-field" placeholder="WhatsApp" aria-label="WhatsApp" required>
       <input id="sellerRegion" placeholder="Região" value="Santos" required maxlength="80">
       <select id="sellerExecutive" class="hidden"><option value="">Selecione o executivo</option></select>
       <select id="sellerSupervisor" class="hidden"><option value="">Selecione o supervisor</option></select>
       <button id="sellerCreateBtn" class="btn" type="submit" aria-describedby="sellerSetupStatus" disabled>Cadastrar vendedor</button>
     </form>
     <div id="sellerManagementStatus" class="muted" role="status" aria-live="polite"></div>
-    <div style="overflow:auto;margin-top:12px">
-      <table style="width:100%;border-collapse:collapse">
-        <thead><tr><th>Integrante</th><th>Perfil</th><th>Região</th><th>E-mail</th><th>Telefone</th><th>Estado</th><th>Envios</th><th>Ação</th></tr></thead>
+    <div class="team-table-wrap">
+      <table class="team-table" style="width:100%;border-collapse:collapse">
+        <thead><tr><th>Integrante</th><th>Perfil</th><th>Região</th><th>E-mail</th><th>Telefone</th><th>Estado</th><th>Ação</th></tr></thead>
         <tbody id="sellerManagementRows"></tbody>
       </table>
     </div>
@@ -1162,72 +1320,33 @@ th{
     style="margin-top:18px"
   >
 
-    <div class="export-actions" style="display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap;margin-bottom:14px">
-      <button id="exportMailingBtn" class="btn secondary hidden" type="button">Exportar mailing da equipe (Excel)</button>
-      <button id="exportLeadsBtn" class="btn secondary" type="button">Exportar clientes (Excel)</button>
-    </div>
-
+    <div class="lead-toolbar">
     <div class="filters">
-
-      <input
-        id="search"
-        placeholder="Buscar cliente, telefone ou endereço"
-      >
-
+      <input id="search" placeholder="Buscar cliente, telefone ou endereço">
       <select id="product">
-
-        <option value="">
-          Todos os produtos
-        </option>
-
+        <option value="">Todos os produtos</option>
         <option>Internet</option>
         <option>Celular</option>
         <option>TV</option>
         <option>Combo</option>
-
       </select>
-
-
       <select id="status">
-
-        <option value="">
-          Todos os status
-        </option>
-
-        <option value="NOVO">
-          NOVO
-        </option>
-
-        <option value="CONTATO_REALIZADO">
-          CONTATO REALIZADO
-        </option>
-
-        <option value="PROPOSTA">
-          PROPOSTA
-        </option>
-
-        <option value="NEGOCIACAO">
-          NEGOCIAÇÃO
-        </option>
-
-        <option value="VENDA">
-          VENDA
-        </option>
-
-        <option value="PENDENTE_INSTALACAO">
-          PENDENTE DE INSTALAÇÃO
-        </option>
-
-        <option value="CONECTADO">
-          CONECTADO
-        </option>
-
-        <option value="NAO_VENDA">
-          NÃO VENDA
-        </option>
-
+        <option value="">Todos os status</option>
+        <option value="NOVO">NOVO</option>
+        <option value="CONTATO_REALIZADO">CONTATO REALIZADO</option>
+        <option value="PROPOSTA">PROPOSTA</option>
+        <option value="NEGOCIACAO">NEGOCIAÇÃO</option>
+        <option value="VENDA">VENDA</option>
+        <option value="PENDENTE_INSTALACAO">PENDENTE DE INSTALAÇÃO</option>
+        <option value="CONECTADO">CONECTADO</option>
+        <option value="NAO_VENDA">NÃO VENDA</option>
       </select>
+    </div>
 
+    <div class="export-actions">
+      <button id="exportMailingBtn" class="btn secondary hidden" type="button">Exportar mailing da equipe (Excel)</button>
+      <button id="exportLeadsBtn" class="btn secondary" type="button">Exportar clientes (Excel)</button>
+    </div>
     </div>
 
     <div
@@ -1240,7 +1359,7 @@ th{
 
     <div class="table-wrap">
 
-      <table>
+      <table class="lead-table">
 
         <thead>
 
@@ -1721,11 +1840,11 @@ function render() {
     filtered.map(lead =>
       "<tr>" +
 
-        "<td><b>" +
+        "<td data-label=\\\"Cliente\\\"><b>" +
           escapeHtml(lead.name) +
         "</b></td>" +
 
-        "<td>" +
+        "<td data-label=\\\"Telefone\\\" class=\\\"phone-cell\\\">" +
           escapeHtml(
             formatPhone(
               lead.customer_phone
@@ -1733,19 +1852,19 @@ function render() {
           ) +
         "</td>" +
 
-        "<td>" +
+        "<td data-label=\\\"Endereço\\\">" +
           escapeHtml(
             lead.address
           ) +
         "</td>" +
 
-        "<td>" +
+        "<td data-label=\\\"Possui Claro\\\">" +
           escapeHtml(
             lead.has_claro
           ) +
         "</td>" +
 
-        "<td>" +
+        "<td data-label=\\\"Produto de interesse\\\">" +
           "<span class=\\\"pill\\\">" +
             escapeHtml(
               lead.product_searched
@@ -1753,7 +1872,7 @@ function render() {
           "</span>" +
         "</td>" +
 
-        "<td>" +
+        "<td data-label=\\\"Data/Hora\\\">" +
           escapeHtml(
             formatDate(
               lead.created_at
@@ -1761,16 +1880,16 @@ function render() {
           ) +
         "</td>" +
 
-        "<td>" + (canUpdateLeadStatus
+        "<td data-label=\\\"Status\\\">" + (canUpdateLeadStatus
           ? leadStatusSelect(lead)
           : escapeHtml(lead.status)) +
         "</td>" +
 
         (isManager ?
-          "<td>" + escapeHtml(lead.observation) +
+          "<td data-label=\\\"Observação\\\">" + escapeHtml(lead.observation) +
           (lead.observation !== undefined ? '<br><button type="button" data-observation-lead="' +
             escapeHtml(lead.id) + '">Editar observação</button>' : "") + "</td>" +
-          "<td>" + escapeHtml(lead.crm_external_id) + "</td>" : "") +
+          "<td data-label=\\\"ID no CRM\\\">" + escapeHtml(lead.crm_external_id) + "</td>" : "") +
 
       "</tr>"
     ).join("");
@@ -2154,7 +2273,7 @@ async function showApp() {
   $("scope").textContent =
     "Usuário: " +
     user.email +
-    (leaderRole ? " · Perfil " + (leaderRole === "EXECUTIVO" ? "Executivo / Coordenador" : leaderRole.toLowerCase()) : " · Acesso controlado pelo RLS do Supabase");
+    (leaderRole ? " · Perfil " + (leaderRole === "EXECUTIVO" ? "Executivo Coordenador" : leaderRole.toLowerCase()) : " · Acesso controlado pelo RLS do Supabase");
 
 
   await loadLeads();
@@ -2198,7 +2317,7 @@ async function loadSellerManagement() {
     $("sellerCreateBtn").disabled = !payload.readiness?.ready;
     const roleSelect = $("sellerRole");
     const roleOptions = payload.role === "GERENTE"
-      ? [["VENDEDOR", "Vendedor"], ["SUPERVISOR", "Supervisor"], ["EXECUTIVO", "Executivo / Coordenador"]]
+      ? [["VENDEDOR", "Vendedor"], ["SUPERVISOR", "Supervisor"], ["EXECUTIVO", "Executivo Coordenador"]]
       : payload.role === "EXECUTIVO"
         ? [["VENDEDOR", "Vendedor"], ["SUPERVISOR", "Supervisor"]]
         : [["VENDEDOR", "Vendedor"]];
@@ -2215,39 +2334,40 @@ async function loadSellerManagement() {
       const tr = document.createElement("tr");
       const state = seller.active ? "Ativo" : "Desligado";
       const emailStatus = seller.onboarding?.email_status;
-      const emailLabel = emailStatus === "sent" ? "enviado" : emailStatus === "failed" ? "falhou" : "pendente";
-      const delivery = seller.onboarding
-        ? "E-mail: " + emailLabel + " · WhatsApp: " + (emailStatus === "sent" ? "manual (sem custo)" : "após confirmar o e-mail")
-        : "Sem controle de envio";
-      const name = document.createElement("td"); name.textContent = seller.name;
-      const role = document.createElement("td"); role.textContent = seller.role === "EXECUTIVO" ? "Executivo / Coordenador" : seller.role === "SUPERVISOR" ? "Supervisor" : "Vendedor";
-      const region = document.createElement("td"); region.textContent = seller.region || "—";
-      const email = document.createElement("td"); email.textContent = seller.email || "—";
-      const phone = document.createElement("td"); phone.textContent = seller.phone ? formatPhone(seller.phone) : "—";
-      const active = document.createElement("td"); active.textContent = state;
-      const sends = document.createElement("td"); sends.textContent = delivery;
+      const name = document.createElement("td"); name.dataset.label = "Integrante"; name.textContent = seller.name;
+      const role = document.createElement("td"); role.dataset.label = "Perfil"; role.textContent = seller.role === "EXECUTIVO" ? "Executivo Coordenador" : seller.role === "SUPERVISOR" ? "Supervisor" : "Vendedor";
+      const region = document.createElement("td"); region.dataset.label = "Região"; region.textContent = seller.region || "—";
+      const email = document.createElement("td"); email.dataset.label = "E-mail"; email.textContent = seller.email || "—";
+      const phone = document.createElement("td"); phone.dataset.label = "Telefone"; phone.className = "phone-cell"; phone.textContent = seller.phone ? formatPhone(seller.phone) : "—";
+      const active = document.createElement("td"); active.dataset.label = "Estado"; active.textContent = state;
       const actionCell = document.createElement("td");
+      actionCell.dataset.label = "Ação";
       actionCell.className = "team-actions";
       if (seller.role === "VENDEDOR" || (payload.role === "GERENTE" && ["EXECUTIVO", "SUPERVISOR"].includes(seller.role))) {
-        const action = document.createElement("button"); action.type = "button"; action.className = "btn secondary";
-        action.textContent = seller.active ? "Desligar" : "Reativar";
+        const action = document.createElement("button"); action.type = "button"; action.className = "btn secondary icon-button" + (seller.active ? " danger-icon" : " success-icon");
+        action.textContent = seller.active ? "×" : "✓";
+        action.setAttribute("aria-label", (seller.active ? "Desligar " : "Reativar ") + seller.name);
+        action.title = seller.active ? "Desligar" : "Reativar";
         action.addEventListener("click", () => setSellerActive(seller, !seller.active));
         actionCell.append(action);
       }
       if (seller.onboarding && seller.onboarding.email_status !== "sent") {
-        const retry = document.createElement("button"); retry.type = "button"; retry.className = "btn secondary"; retry.style.marginLeft = "6px"; retry.textContent = "Reenviar e-mail";
+        const retry = document.createElement("button"); retry.type = "button"; retry.className = "btn secondary icon-button"; retry.style.marginLeft = "6px"; retry.textContent = "↻";
+        retry.setAttribute("aria-label", "Reenviar convite por e-mail para " + seller.name); retry.title = "Reenviar e-mail";
         retry.addEventListener("click", () => retrySellerDelivery(seller)); actionCell.append(retry);
       }
       if (seller.onboarding && seller.onboarding.email_status === "sent" && seller.phone) {
         const qrUrl = new URL("/", QR_PRODUCTION_ORIGIN); qrUrl.searchParams.set("vendedor", seller.id);
-        const whatsapp = document.createElement("a"); whatsapp.className = "btn secondary"; whatsapp.style.marginLeft = "6px";
-        whatsapp.textContent = "Abrir WhatsApp"; whatsapp.href = buildWhatsappInviteUrl(seller.phone, seller.name, qrUrl.href);
+        const whatsapp = document.createElement("a"); whatsapp.className = "btn secondary icon-button whatsapp-icon"; whatsapp.style.marginLeft = "6px";
+        whatsapp.innerHTML = '<svg viewBox="0 0 32 32" aria-hidden="true"><path d="M16 3a12 12 0 0 0-10.3 18.2L4 28l7-1.8A12 12 0 1 0 16 3Z"/><path d="M12.2 10.2c-.3-.7-.7-.7-1-.7h-.8c-.3 0-.7.1-1 .5s-1.3 1.3-1.3 3.1 1.3 3.5 1.5 3.7 2.6 4.1 6.4 5.5c3.1 1.2 3.8 1 4.5.9s2.2-.9 2.5-1.8.3-1.7.2-1.8-.3-.3-.7-.5l-2.4-1.2c-.3-.1-.6-.2-.8.2s-.9 1.2-1.1 1.4-.4.3-.7.1a9.8 9.8 0 0 1-2.9-1.8 11 11 0 0 1-2-2.5c-.2-.3 0-.5.1-.7l.5-.6.4-.6c.1-.2 0-.5 0-.6s-.8-2-1.1-2.6Z"/></svg>';
+        whatsapp.setAttribute("aria-label", "Abrir WhatsApp para " + seller.name); whatsapp.title = "Abrir WhatsApp";
+        whatsapp.href = buildWhatsappInviteUrl(seller.phone, seller.name, qrUrl.href);
         whatsapp.target = "_blank"; whatsapp.rel = "noopener noreferrer"; actionCell.append(whatsapp);
       }
       if (seller.role === "SUPERVISOR" && payload.role === "GERENTE" || seller.role === "VENDEDOR") {
         appendTransferControls(actionCell, seller, payload);
       }
-      tr.append(name, role, region, email, phone, active, sends, actionCell); rows.append(tr);
+      tr.append(name, role, region, email, phone, active, actionCell); rows.append(tr);
     });
   } catch (error) {
     status.textContent = error.message;
@@ -2272,7 +2392,7 @@ function appendTransferControls(actionCell, seller, payload) {
   const add = (label, value, selected = false) => {
     const option = new Option(label, value); option.selected = selected; select.add(option);
   };
-  add("Transferir para…", "");
+  add("Transferir…", "");
   if (seller.role === "SUPERVISOR") {
     add("Sem executivo", "manager");
     (payload.assignableExecutives || []).forEach(item => add("Executivo: " + item.label, "executive:" + item.id));
@@ -2288,16 +2408,22 @@ function appendTransferControls(actionCell, seller, payload) {
   }
   const moveTeam = document.createElement("input");
   moveTeam.type = "checkbox"; moveTeam.checked = true;
+  moveTeam.setAttribute("aria-label", "Levar vendedores da equipe junto com o supervisor");
   const moveTeamLabel = document.createElement("label");
   moveTeamLabel.className = "move-team-option";
-  moveTeamLabel.append(moveTeam, document.createTextNode("Levar vendedores da equipe"));
-  if (seller.role === "SUPERVISOR") group.append(select, moveTeamLabel);
-  else group.append(select);
-  const transfer = document.createElement("button"); transfer.type = "button"; transfer.className = "btn secondary";
-  transfer.textContent = "Transferir";
+  if (seller.role === "SUPERVISOR") {
+    moveTeamLabel.title = "Levar os vendedores da equipe junto com o supervisor";
+    moveTeamLabel.setAttribute("aria-label", "Levar vendedores da equipe junto com o supervisor");
+    const teamSymbol = document.createElement("span"); teamSymbol.className = "move-team-symbol"; teamSymbol.setAttribute("aria-hidden", "true");
+    teamSymbol.innerHTML = '<svg viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="10" cy="7" r="4"/><path d="M20 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>';
+    moveTeamLabel.append(moveTeam, teamSymbol);
+  }
+  const transfer = document.createElement("button"); transfer.type = "button"; transfer.className = "btn secondary icon-button transfer-icon";
+  transfer.textContent = "⇄"; transfer.setAttribute("aria-label", "Transferir " + seller.name); transfer.title = "Transferir";
   transfer.addEventListener("click", () => submitSellerTransfer(seller, select, moveTeam));
-  group.append(transfer);
+  group.append(transfer, select);
   actionCell.append(group);
+  if (seller.role === "SUPERVISOR") actionCell.append(moveTeamLabel);
 }
 
 async function submitSellerTransfer(seller, select, moveTeam) {
@@ -2615,7 +2741,7 @@ $("exportMailingBtn").addEventListener("click", () => {
   }
   const rows = [["Integrante", "Perfil", "Região", "E-mail", "Telefone", "Estado"], ...sellers.map(seller => [
     seller.name,
-    seller.role === "EXECUTIVO" ? "Executivo / Coordenador" : seller.role === "SUPERVISOR" ? "Supervisor" : "Vendedor",
+    seller.role === "EXECUTIVO" ? "Executivo Coordenador" : seller.role === "SUPERVISOR" ? "Supervisor" : "Vendedor",
     seller.region,
     seller.email,
     seller.phone,

@@ -62,6 +62,35 @@ test("wallet preview embeds only its configured public Supabase credentials", as
   assert.match(html, /https:\/\/wallet-staging\.example\.test/);
   assert.match(html, /<option value="PENDENTE_INSTALACAO">/);
   assert.match(html, /<option value="CONECTADO">/);
+  assert.match(html, /th,td\s*\{[^}]*overflow-wrap:anywhere/s);
+  assert.match(html, /\.table-wrap\s*\{\s*max-width:100%/s);
+  assert.match(html, /\.table-wrap tbody tr,.team-table-wrap tbody tr\{display:block/);
+  assert.match(html, /\.icon-button\{/);
+  assert.match(html, /--wallet-control-height:40px/);
+  assert.match(html, /\.btn\{[^}]*height:var\(--wallet-control-height\)/s);
+  assert.match(html, /button\{min-height:var\(--wallet-control-height\)\}/);
+  assert.match(html, /\.team-table \.danger-icon\{[^}]*height:var\(--wallet-control-height\)/s);
+  assert.match(html, /\.team-table\{table-layout:auto\}/);
+  assert.match(html, /\.team-table th,\.team-table td\{white-space:nowrap\}/);
+  assert.match(html, /\.team-table td:nth-child\(2\)\{white-space:normal\}/);
+  assert.match(html, /\.team-table th:nth-child\(7\),\.team-table td:nth-child\(7\)\{text-align:left\}/);
+  assert.match(html, /\.team-table \.team-actions\{[^}]*justify-content:flex-start/s);
+  assert.match(html, /\.lead-table th,\.lead-table td\{text-align:left\}/);
+  assert.match(html, /\.lead-table \[data-observation-lead\]\{[^}]*justify-content:flex-start[^}]*white-space:nowrap/s);
+  assert.match(html, /\.team-table \.transfer-controls select\{flex:0 0 96px;width:96px;min-width:96px;max-width:96px/);
+  assert.match(html, /<input id="sellerPhone" type="tel" class="seller-phone-field" placeholder="WhatsApp" aria-label="WhatsApp" required>/);
+  assert.doesNotMatch(html, /<th>Envios<\/th>/);
+  assert.match(html, /\.whatsapp-icon\{background:#31bd68!important;color:#fff!important/);
+  assert.match(html, /moveTeam\.setAttribute\("aria-label", "Levar vendedores da equipe junto com o supervisor"\)/);
+  assert.doesNotMatch(html, /createTextNode\("Levar equipe junto"\)/);
+  assert.match(html, /group\.append\(transfer, select\)/);
+  assert.match(html, /\.lead-toolbar\{display:grid;grid-template-columns:minmax\(0,3fr\) minmax\(0,1\.5fr\)/);
+  assert.match(html, /move-team-symbol/);
+  assert.match(html, /actionCell\.append\(group\);\s*if \(seller\.role === "SUPERVISOR"\) actionCell\.append\(moveTeamLabel\);/);
+  assert.match(html, /aria-label", "Transferir " \+ seller\.name/);
+  assert.match(html, /aria-label", "Abrir WhatsApp para " \+ seller\.name/);
+  assert.doesNotMatch(html, /min-width:\s*900px/);
+  assert.doesNotMatch(html, /Executivo \/ Coordenador/);
   assert.doesNotMatch(html, /xmipdjjdtruutcumhrzb|test-service-secret/);
 });
 
@@ -211,7 +240,7 @@ test("expired invitation does not open the password form", async () => {
 test("manager can edit and clear a note without changing the read-only CRM ID", async () => {
   const { element, calls, edit, submit } = await wallet();
   assert.match(element("rows").innerHTML, /data-observation-lead="lead-1"/);
-  assert.match(element("rows").innerHTML, /<td>CRM-123<\/td>/);
+  assert.match(element("rows").innerHTML, /<td data-label="ID no CRM">CRM-123<\/td>/);
   edit();
   assert.equal(element("observationDialog").open, true);
   element("observationInput").value = "  <b>Nota</b>  ";
@@ -220,7 +249,7 @@ test("manager can edit and clear a note without changing the read-only CRM ID", 
     p_lead_id: "lead-1", p_expected_observation: null, p_observation: "<b>Nota</b>"
   }]);
   assert.match(element("rows").innerHTML, /&lt;b&gt;Nota&lt;\/b&gt;/);
-  assert.match(element("rows").innerHTML, /<td>CRM-123<\/td>/);
+  assert.match(element("rows").innerHTML, /<td data-label="ID no CRM">CRM-123<\/td>/);
   edit();
   element("observationInput").value = "   ";
   await submit();
