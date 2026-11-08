@@ -992,6 +992,8 @@ body{
 button{min-height:var(--wallet-control-height)}
 .lead-status-select{height:var(--wallet-control-height);min-height:var(--wallet-control-height)}
 [data-observation-lead]{height:var(--wallet-control-height);padding:0 10px}
+.lead-table th,.lead-table td{text-align:left}
+.lead-table [data-observation-lead]{display:inline-flex;align-items:center;justify-content:flex-start;width:max-content;max-width:100%;white-space:nowrap;text-align:left}
 
 .table-wrap{
   max-width:100%;
