@@ -207,8 +207,55 @@ async function wallet({ manager = true, privateFieldsError = null, saveError = n
     return element("rows").handlers.change({ target: { closest: () => control } });
   };
   const workbook = () => vm.runInContext('createXlsx([["Cliente"], ["Nome de teste"]], "Clientes")', context);
-  return { element, calls, edit, submit, leadUpdates, setSellerMode, changeStatus, workbook };
+  return { element, calls, edit, submit, leadUpdates, setSellerMode, changeStatus, workbook, context };
 }
+
+test("CSV team preview parses quoted cells and validates hierarchy by e-mail", async () => {
+  const { context } = await wallet({ loadWallet: false });
+  vm.runInContext('sellerTeamData = { role: "GERENTE", sellers: [], readiness: { ready: true } }', context);
+  const csv = [
+    "perfil;nome;email;whatsapp;regiao;executivo_email;supervisor_email",
+    "EXECUTIVO COORDENADOR;Coordenador;coord@example.test;13999990001;Santos;;",
+    'SUPERVISOR;"Ana; Paula";ana@example.test;13999990002;Santos;coord@example.test;',
+    "VENDEDOR;Vendedor;vendedor@example.test;13999990003;Santos;coord@example.test;ana@example.test"
+  ].join("\n");
+  const result = JSON.parse(JSON.stringify(vm.runInContext(
+    `validateSellerCsvRows(parseSellerCsv(${JSON.stringify(csv)}))`, context
+  )));
+  assert.deepEqual(result.map(row => row.name), ["Coordenador", "Ana; Paula", "Vendedor"]);
+  assert.deepEqual(result.map(row => row.memberRole), ["EXECUTIVO", "SUPERVISOR", "VENDEDOR"]);
+  assert.ok(result.every(row => row.errors.length === 0), JSON.stringify(result.map(row => row.errors)));
+});
+
+test("CSV team preview blocks duplicate e-mails and invalid phone numbers", async () => {
+  const { context } = await wallet({ loadWallet: false });
+  vm.runInContext('sellerTeamData = { role: "GERENTE", sellers: [], readiness: { ready: true } }', context);
+  const csv = [
+    "perfil,nome,email,whatsapp,regiao",
+    "VENDEDOR,Teste 1,duplicado@example.test,13999990000,Santos",
+    "VENDEDOR,Teste 2,duplicado@example.test,13999990001,Santos",
+    "VENDEDOR,Telefone inválido,invalido@example.test,123,Santos"
+  ].join("\n");
+  const result = JSON.parse(JSON.stringify(vm.runInContext(
+    `validateSellerCsvRows(parseSellerCsv(${JSON.stringify(csv)}))`, context
+  )));
+  assert.ok(result[0].errors.includes("E-mail duplicado"));
+  assert.ok(result[1].errors.includes("E-mail duplicado"));
+  assert.ok(result[2].errors.includes("WhatsApp deve ter DDD e 10 ou 11 dígitos"));
+});
+
+test("CSV team preview rejects inactive hierarchy destinations", async () => {
+  const { context } = await wallet({ loadWallet: false });
+  vm.runInContext('sellerTeamData = ' + JSON.stringify({ role: "GERENTE", sellers: [{ email: "inactive@example.test", role: "EXECUTIVO", active: false }], readiness: { ready: true } }), context);
+  const csv = [
+    "perfil,nome,email,whatsapp,regiao,executivo_email",
+    "VENDEDOR,Teste,vendedor@example.test,13999990000,Santos,inactive@example.test"
+  ].join("\n");
+  const result = JSON.parse(JSON.stringify(vm.runInContext(
+    `validateSellerCsvRows(parseSellerCsv(${JSON.stringify(csv)}))`, context
+  )));
+  assert.ok(result[0].errors.includes("Executivo não encontrado ou inválido"));
+});
 
 test("invite and recovery links show password setup before loading any wallet data", async () => {
   for (const type of ["invite", "recovery"]) {
@@ -331,3 +378,4 @@ test("stale edit reloads the wallet without displaying the rejected value", asyn
   assert.doesNotMatch(element("rows").innerHTML, /Edição desatualizada/);
   assert.match(element("managerMessage").textContent, /Confira o valor atual/);
 });
+
