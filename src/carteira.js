@@ -2131,6 +2131,16 @@ function stopSellerAccessGuard() {
   sellerAccessGuardUserId = "";
 }
 
+async function getActiveSellerAccess() {
+  // Let the sellers RLS policy resolve direct and explicitly mapped accounts.
+  return client
+    .from("sellers")
+    .select("id")
+    .eq("active", true)
+    .limit(1)
+    .maybeSingle();
+}
+
 async function verifySellerAccessOnResume() {
   const expectedUserId = sellerAccessGuardUserId;
   if (!expectedUserId || sellerAccessGuardBusy || document.visibilityState === "hidden") return;
@@ -2144,12 +2154,7 @@ async function verifySellerAccessOnResume() {
       return;
     }
 
-    const { data: activeSeller, error: sellerAccessError } = await client
-      .from("sellers")
-      .select("id")
-      .eq("seller_user_id", expectedUserId)
-      .eq("active", true)
-      .maybeSingle();
+    const { data: activeSeller, error: sellerAccessError } = await getActiveSellerAccess();
 
     if (sellerAccessError) throw sellerAccessError;
     if (!activeSeller) {
@@ -2238,12 +2243,7 @@ async function showApp() {
   leaderRole = roleRows.map(role => role.role).find(role => ["GERENTE", "EXECUTIVO", "SUPERVISOR"].includes(role)) || "";
 
   if (roleRows.some(role => role.role === "VENDEDOR") || (!isManager && ["EXECUTIVO", "SUPERVISOR"].includes(leaderRole))) {
-    const { data: activeSeller, error: sellerAccessError } = await client
-      .from("sellers")
-      .select("id")
-      .eq("seller_user_id", user.id)
-      .eq("active", true)
-      .maybeSingle();
+    const { data: activeSeller, error: sellerAccessError } = await getActiveSellerAccess();
 
     if (sellerAccessError || !activeSeller) {
       stopSellerAccessGuard();
