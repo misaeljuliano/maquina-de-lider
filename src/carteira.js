@@ -898,6 +898,19 @@ body{
 #sellerRegion{flex:0 1 120px;width:120px}
 #sellerExecutive,#sellerSupervisor{flex:0 1 180px;width:180px}
 .seller-form #sellerCreateBtn{flex:0 0 auto;padding:8px 10px;border-radius:9px;font-size:12px}
+.seller-bulk-import{margin:12px 0;padding:10px 12px;border:1px solid #dfe2e8;border-radius:10px;background:#fafafa}
+.seller-bulk-import summary{cursor:pointer;font-weight:650}
+.seller-bulk-import p{margin:8px 0}
+.seller-bulk-tools{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.seller-csv-picker{display:inline-flex;align-items:center;min-height:36px;padding:6px 10px;border:1px solid #cfd2d8;border-radius:8px;background:#fff;cursor:pointer;font-size:13px}
+.seller-csv-picker input{max-width:210px;margin-left:8px;font-size:12px}
+.seller-csv-preview{max-height:280px;overflow:auto;margin:10px 0;border:1px solid #dfe2e8;border-radius:8px;background:#fff}
+.seller-csv-preview table{width:100%;border-collapse:collapse;font-size:12px}
+.seller-csv-preview th,.seller-csv-preview td{padding:6px 8px;border-bottom:1px solid #e7e9ed;text-align:left;white-space:nowrap}
+.seller-csv-preview th{position:sticky;top:0;background:#f3f4f6}
+.seller-csv-row-error{color:#b42318}
+.seller-csv-row-ok{color:#18794e}
+.seller-bulk-import #sellerCsvCreateBtn{margin-top:8px}
 
 .team-actions,.transfer-controls{
   display:flex;
@@ -1305,6 +1318,17 @@ th{
       <select id="sellerSupervisor" class="hidden"><option value="">Selecione o supervisor</option></select>
       <button id="sellerCreateBtn" class="btn" type="submit" aria-describedby="sellerSetupStatus" disabled>Cadastrar vendedor</button>
     </form>
+    <details id="sellerBulkImport" class="seller-bulk-import">
+      <summary>Preparar cadastro em escala por CSV</summary>
+      <p class="muted">Baixe o modelo, confira os dados e revise a prévia. Os vínculos usam os e-mails dos gestores; executivos, supervisores e vendedores são processados nesta ordem. Só a confirmação cria contas e envia convites por e-mail. WhatsApp continua manual e gratuito.</p>
+      <div class="seller-bulk-tools">
+        <button id="sellerCsvTemplateBtn" class="btn secondary" type="button">Baixar modelo CSV</button>
+        <label class="seller-csv-picker">Selecionar CSV<input id="sellerCsvFile" type="file" accept=".csv,text/csv"></label>
+      </div>
+      <div id="sellerCsvPreview" class="seller-csv-preview hidden"></div>
+      <button id="sellerCsvCreateBtn" class="btn hidden" type="button" disabled>Cadastrar válidos e enviar convites</button>
+      <div id="sellerCsvStatus" class="muted" role="status" aria-live="polite"></div>
+    </details>
     <div id="sellerManagementStatus" class="muted" role="status" aria-live="polite"></div>
     <div class="team-table-wrap">
       <table class="team-table" style="width:100%;border-collapse:collapse">
@@ -2535,6 +2559,218 @@ async function createSeller(event) {
   finally { button.disabled = !sellerTeamData?.readiness?.email; button.textContent = "Cadastrar vendedor"; }
 }
 
+function parseSellerCsv(source) {
+  const text = source.replace(/^\\uFEFF/, "");
+  const sample = text.split(/\\r?\\n/, 2)[0] || "";
+  const delimiters = [",", ";", "\t"];
+  const delimiter = delimiters.map(candidate => [candidate, [...sample].filter(char => char === candidate).length])
+    .sort((a, b) => b[1] - a[1])[0][0];
+  const rows = [];
+  let row = [], cell = "", quoted = false;
+  for (let i = 0; i < text.length; i++) {
+    const char = text[i];
+    if (char === '"') {
+      if (quoted && text[i + 1] === '"') { cell += '"'; i++; }
+      else quoted = !quoted;
+    } else if (!quoted && char === delimiter) {
+      row.push(cell.trim()); cell = "";
+    } else if (!quoted && (char === "\\n" || char === "\\r")) {
+      if (char === "\\r" && text[i + 1] === "\\n") i++;
+      row.push(cell.trim()); cell = "";
+      if (row.some(value => value !== "")) rows.push(row);
+      row = [];
+    } else cell += char;
+  }
+  if (quoted) throw new Error("O CSV contém aspas sem fechamento.");
+  row.push(cell.trim());
+  if (row.some(value => value !== "")) rows.push(row);
+  if (rows.length < 2) throw new Error("O arquivo precisa ter cabeçalho e pelo menos um integrante.");
+
+  const normalize = value => value.normalize("NFD").replace(/[\\u0300-\\u036f]/g, "")
+    .toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "");
+  const aliases = {
+    perfil: "role", funcao: "role", nome: "name", nome_completo: "name", email: "email", e_mail: "email",
+    whatsapp: "phone", telefone: "phone", regiao: "region", executivo_email: "executiveEmail",
+    email_executivo: "executiveEmail", supervisor_email: "supervisorEmail", email_supervisor: "supervisorEmail"
+  };
+  const indexes = Object.fromEntries(rows.shift().map(normalize).map((header, index) => [aliases[header] || header, index]));
+  for (const required of ["role", "name", "email", "phone", "region"])
+    if (indexes[required] === undefined) throw new Error("Falta a coluna obrigatória '" + required + "'. Baixe o modelo CSV para conferir os nomes.");
+  return rows.map((values, index) => ({
+    line: index + 2,
+    role: String(values[indexes.role] || "").trim().toUpperCase().normalize("NFD").replace(/[\\u0300-\\u036f]/g, ""),
+    name: String(values[indexes.name] || "").trim(),
+    email: String(values[indexes.email] || "").trim().toLowerCase(),
+    phone: String(values[indexes.phone] || "").trim(),
+    region: String(values[indexes.region] || "").trim(),
+    executiveEmail: String(values[indexes.executiveEmail] || "").trim().toLowerCase(),
+    supervisorEmail: String(values[indexes.supervisorEmail] || "").trim().toLowerCase(),
+    errors: [], completed: false, createdButPending: false
+  }));
+}
+
+let sellerCsvRows = [];
+
+function sellerCsvRole(value) {
+  const role = value.replace(/[ _-]+/g, "");
+  if (["VENDEDOR", "VENDEDORA"].includes(role)) return "VENDEDOR";
+  if (["SUPERVISOR", "SUPERVISORA"].includes(role)) return "SUPERVISOR";
+  if (["EXECUTIVO", "EXECUTIVOCOORDENADOR", "COORDENADOR"].includes(role)) return "EXECUTIVO";
+  return "";
+}
+
+function sellerCsvPhoneDigits(value) {
+  let digits = String(value || "").replace(/\\D/g, "");
+  if (digits.startsWith("55") && digits.length > 11) digits = digits.slice(2);
+  return digits;
+}
+
+function validateSellerCsvRows(rows) {
+  const allowedRoles = new Set(sellerTeamData?.role === "GERENTE"
+    ? ["VENDEDOR", "SUPERVISOR", "EXECUTIVO"]
+    : sellerTeamData?.role === "EXECUTIVO" ? ["VENDEDOR", "SUPERVISOR"] : ["VENDEDOR"]);
+  const byEmail = new Map();
+  const existing = new Map((sellerTeamData?.sellers || []).map(item => [String(item.email || "").toLowerCase(), item]));
+  for (const item of rows) byEmail.set(item.email, (byEmail.get(item.email) || 0) + 1);
+  rows.forEach(item => {
+    item.errors = [];
+    item.memberRole = sellerCsvRole(item.role);
+    if (!item.memberRole || !allowedRoles.has(item.memberRole)) item.errors.push("Perfil não permitido para sua carteira");
+    if (item.name.length < 2 || item.name.length > 120) item.errors.push("Nome inválido");
+    if (!/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(item.email) || item.email.length > 254) item.errors.push("E-mail inválido");
+    if (byEmail.get(item.email) > 1 || existing.has(item.email)) item.errors.push("E-mail duplicado");
+    if (![10, 11].includes(sellerCsvPhoneDigits(item.phone).length)) item.errors.push("WhatsApp deve ter DDD e 10 ou 11 dígitos");
+    if (item.region.length < 2 || item.region.length > 80) item.errors.push("Região inválida");
+    if (item.memberRole === "SUPERVISOR" && sellerTeamData?.role === "GERENTE" && !item.executiveEmail)
+      item.errors.push("Informe o e-mail do executivo vinculado");
+  });
+
+  const rowByEmail = new Map(rows.map(item => [item.email, item]));
+  for (const item of rows) {
+    if (item.memberRole === "SUPERVISOR" && item.executiveEmail) {
+      const importedParent = rowByEmail.get(item.executiveEmail);
+      const parent = importedParent || existing.get(item.executiveEmail);
+      if (!parent || (parent.memberRole || parent.role) !== "EXECUTIVO" || parent.errors?.length || (!importedParent && !parent.active))
+        item.errors.push("Executivo não encontrado ou inválido");
+    }
+    if (item.memberRole === "VENDEDOR" && item.executiveEmail) {
+      const importedParent = rowByEmail.get(item.executiveEmail);
+      const parent = importedParent || existing.get(item.executiveEmail);
+      if (!parent || (parent.memberRole || parent.role) !== "EXECUTIVO" || parent.errors?.length || (!importedParent && !parent.active))
+        item.errors.push("Executivo não encontrado ou inválido");
+    }
+    if (item.memberRole === "VENDEDOR" && item.supervisorEmail) {
+      const importedParent = rowByEmail.get(item.supervisorEmail);
+      const parent = importedParent || existing.get(item.supervisorEmail);
+      if (!parent || (parent.memberRole || parent.role) !== "SUPERVISOR" || parent.errors?.length || (!importedParent && !parent.active))
+        item.errors.push("Supervisor não encontrado ou inválido");
+    }
+  }
+  return rows;
+}
+
+function renderSellerCsvPreview(rows) {
+  const host = $("sellerCsvPreview"); host.replaceChildren();
+  const table = document.createElement("table"), head = document.createElement("thead"), header = document.createElement("tr");
+  ["Linha", "Perfil", "Nome", "E-mail", "Validação"].forEach(label => { const th = document.createElement("th"); th.textContent = label; header.append(th); });
+  head.append(header); table.append(head);
+  const body = document.createElement("tbody");
+  rows.forEach(item => {
+    const tr = document.createElement("tr");
+    [String(item.line), item.memberRole || item.role, item.name, item.email,
+      item.completed ? "Convite enviado" : item.createdButPending ? "Conta criada — revisar envio" : item.errors.length ? item.errors.join("; ") : "Pronto"].forEach((value, index) => {
+      const td = document.createElement("td"); td.textContent = value;
+      if (index === 4) td.className = item.completed || (!item.errors.length && !item.createdButPending) ? "seller-csv-row-ok" : "seller-csv-row-error";
+      tr.append(td);
+    });
+    body.append(tr);
+  });
+  table.append(body); host.append(table); host.classList.remove("hidden");
+  $("sellerCsvCreateBtn").classList.remove("hidden");
+  $("sellerCsvCreateBtn").disabled = !rows.some(item => !item.completed && !item.createdButPending) || rows.some(item => item.errors.length) || !sellerTeamData?.readiness?.ready;
+}
+
+function downloadSellerCsvTemplate() {
+  const content = "perfil,nome,email,whatsapp,regiao,executivo_email,supervisor_email\\nEXECUTIVO,Exemplo Coordenador,coordenador@exemplo.com,13999990000,Santos,,\\nSUPERVISOR,Exemplo Supervisor,supervisor@exemplo.com,13999990001,Santos,coordenador@exemplo.com,\\nVENDEDOR,Exemplo Vendedor,vendedor@exemplo.com,13999990002,Santos,coordenador@exemplo.com,supervisor@exemplo.com\\n";
+  const url = URL.createObjectURL(new Blob(["\\ufeff" + content], { type: "text/csv;charset=utf-8" }));
+  const link = document.createElement("a"); link.href = url; link.download = "modelo-equipe-maquina-de-lider.csv"; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+async function previewSellerCsv(file) {
+  const status = $("sellerCsvStatus"); if (!file) return;
+  if (file.size > 500000) { status.textContent = "O arquivo excede 500 KB."; return; }
+  try {
+    const rows = parseSellerCsv(await file.text());
+    if (rows.length > 250) throw new Error("Importe no máximo 250 integrantes por arquivo.");
+    sellerCsvRows = validateSellerCsvRows(rows); renderSellerCsvPreview(sellerCsvRows);
+    const invalid = sellerCsvRows.filter(item => item.errors.length).length;
+    status.textContent = invalid
+      ? invalid + " linha(s) precisam de correção. Nenhum convite foi enviado."
+      : sellerCsvRows.length + " integrante(s) prontos. Nenhum convite foi enviado; revise a lista antes de confirmar.";
+  } catch (error) {
+    sellerCsvRows = []; $("sellerCsvPreview").classList.add("hidden"); $("sellerCsvCreateBtn").classList.add("hidden");
+    status.textContent = error.message || "Não foi possível ler o arquivo.";
+  }
+}
+
+async function createSellerFromCsv(item) {
+  const directory = new Map((sellerTeamData?.sellers || []).map(seller => [String(seller.email || "").toLowerCase(), seller]));
+  const executive = item.executiveEmail ? directory.get(item.executiveEmail) : null;
+  const supervisor = item.supervisorEmail ? directory.get(item.supervisorEmail) : null;
+  if (item.executiveEmail && (!executive || !executive.active || executive.role !== "EXECUTIVO")) throw new Error("O executivo vinculado ainda não está ativo.");
+  if (item.supervisorEmail && (!supervisor || !supervisor.active || supervisor.role !== "SUPERVISOR")) throw new Error("O supervisor vinculado ainda não está ativo.");
+  const sellerId = crypto.randomUUID(), canonical = new URL("/", QR_PRODUCTION_ORIGIN);
+  canonical.searchParams.set("vendedor", sellerId);
+  const headers = await sellerApiHeaders();
+  const response = await fetch("/api/sellers", { method: "POST", headers, body: JSON.stringify({
+    sellerId, memberRole: item.memberRole, name: item.name, email: item.email, phone: item.phone, region: item.region,
+    executiveUserId: item.executiveEmail ? executive.seller_user_id : null,
+    supervisorUserId: item.supervisorEmail ? supervisor.seller_user_id : null,
+    qrPng: sellerQrPng(canonical.href)
+  }) });
+  const result = await response.json();
+  if (!response.ok) throw new Error(result.error || "O cadastro falhou.");
+  return { created: !!result.created, active: !!result.active, emailStatus: result.emailStatus, message: result.message };
+}
+
+async function createSellerCsvBatch() {
+  if (!sellerCsvRows.length || sellerCsvRows.some(item => item.errors.length)) return;
+  const button = $("sellerCsvCreateBtn"), status = $("sellerCsvStatus");
+  const pending = sellerCsvRows.filter(item => !item.completed && !item.createdButPending);
+  if (!pending.length || !confirm("Confirma criar " + pending.length + " conta(s) e enviar convite por e-mail para cada endereço da lista?")) return;
+  button.disabled = true;
+  const roleOrder = { EXECUTIVO: 0, SUPERVISOR: 1, VENDEDOR: 2 };
+  const ordered = [...pending].sort((a, b) => roleOrder[a.memberRole] - roleOrder[b.memberRole] || a.line - b.line);
+  let complete = 0;
+  try {
+    for (const item of ordered) {
+      status.textContent = "Cadastrando " + (complete + 1) + " de " + ordered.length + ": " + item.name + "…";
+      const result = await createSellerFromCsv(item);
+      if (result.created && result.emailStatus === "sent" && result.active) item.completed = true;
+      else if (result.created) item.createdButPending = true;
+      if (!result.created || result.emailStatus !== "sent" || !result.active)
+        throw new Error(result.message || "O cadastro ficou pendente; use a ação de reenvio na equipe antes de continuar.");
+      complete++;
+      if (item.memberRole !== "VENDEDOR") await loadSellerManagement();
+      renderSellerCsvPreview(sellerCsvRows);
+    }
+    await loadSellerManagement();
+    if (isManager) await loadManagerQrSellers();
+    status.textContent = "Concluído: " + complete + " convite(s) enviados. Envie as mensagens de WhatsApp manualmente pelos botões da equipe.";
+    sellerCsvRows = []; $("sellerCsvPreview").classList.add("hidden"); button.classList.add("hidden"); $("sellerCsvFile").value = "";
+  } catch (error) {
+    await loadSellerManagement();
+    renderSellerCsvPreview(sellerCsvRows);
+    status.textContent = "Processamento pausado após " + complete + " convite(s) confirmados. " + error.message + " A linha com envio pendente já criou a conta; use o reenvio na tabela Equipe. As demais linhas continuam disponíveis para retomar.";
+  } finally {
+    button.disabled = !sellerCsvRows.some(item => !item.completed && !item.createdButPending) || sellerCsvRows.some(item => item.errors.length) || !sellerTeamData?.readiness?.ready;
+  }
+}
+
+$("sellerCsvTemplateBtn").addEventListener("click", downloadSellerCsvTemplate);
+$("sellerCsvFile").addEventListener("change", event => void previewSellerCsv(event.target.files?.[0]));
+$("sellerCsvCreateBtn").addEventListener("click", createSellerCsvBatch);
+
 async function retrySellerDelivery(seller) {
   const status = $("sellerManagementStatus"); status.textContent = "Reenviando convite por e-mail…";
   try {
@@ -2854,3 +3090,4 @@ export default {
   }
 
 };
+
