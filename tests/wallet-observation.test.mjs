@@ -379,3 +379,45 @@ test("stale edit reloads the wallet without displaying the rejected value", asyn
   assert.match(element("managerMessage").textContent, /Confira o valor atual/);
 });
 
+test("seller can set a next action and return date", async () => {
+  const state = await wallet({ manager: false });
+  await state.setSellerMode();
+  assert.match(state.element("rows").innerHTML, /data-followup-lead="lead-1"/);
+  vm.runInContext("openLeadFollowup(leads[0])", state.context);
+  assert.equal(state.element("followupDialog").open, true);
+  state.element("followupStep").value = "Ligar para confirmar a proposta";
+  state.element("followupDate").value = "2026-11-12T09:00";
+  await state.element("followupForm").handlers.submit({ preventDefault() {} });
+
+  assert.deepEqual(JSON.parse(JSON.stringify(state.leadUpdates[0])), ["leads", {
+    next_step: "Ligar para confirmar a proposta",
+    next_contact_at: new Date("2026-11-12T09:00").toISOString()
+  }, "id", "lead-1"]);
+  assert.equal(state.element("followupDialog").open, false);
+  assert.match(state.element("message").textContent, /Acompanhamento salvo/);
+});
+
+test("return date requires a next action", async () => {
+  const state = await wallet({ manager: false });
+  await state.setSellerMode();
+  vm.runInContext("openLeadFollowup(leads[0])", state.context);
+  state.element("followupDate").value = "2026-11-12T09:00";
+  await state.element("followupForm").handlers.submit({ preventDefault() {} });
+  assert.equal(state.leadUpdates.length, 0);
+  assert.match(state.element("followupError").textContent, /Descreva a próxima ação/);
+  assert.equal(state.element("followupDialog").open, true);
+});
+
+test("managers can view follow-up data but do not get an edit control", async () => {
+  const state = await wallet();
+  assert.match(state.element("rows").innerHTML, /Sem próxima ação definida/);
+  assert.doesNotMatch(state.element("rows").innerHTML, /data-followup-lead/);
+});
+
+test("closed sales and lost leads are excluded from overdue follow-ups", async () => {
+  const state = await wallet({ manager: false, loadWallet: false });
+  assert.equal(vm.runInContext('isLeadFollowupOverdue({ next_contact_at: "2000-01-01T00:00:00Z", status: "PROPOSTA" })', state.context), true);
+  for (const status of ["VENDA", "CONECTADO", "NAO_VENDA"]) {
+    assert.equal(vm.runInContext('isLeadFollowupOverdue({ next_contact_at: "2000-01-01T00:00:00Z", status: ' + JSON.stringify(status) + ' })', state.context), false);
+  }
+});
