@@ -2038,7 +2038,7 @@ $("rows").addEventListener("change", async event => {
       .eq("id", lead.id).select("id,last_interaction_at,last_interaction_type").maybeSingle();
     if (error) throw error;
     if (!data?.id) throw new Error("Lead não encontrado ou sem permissão para atualizar.");
-    lead.status = nextStatus;
+    Object.assign(lead, data, { status: nextStatus });
     render();
   } catch (error) {
     select.value = previousStatus;
