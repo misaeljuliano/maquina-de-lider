@@ -383,6 +383,10 @@ test("seller can set a next action and return date", async () => {
   const state = await wallet({ manager: false });
   await state.setSellerMode();
   assert.match(state.element("rows").innerHTML, /data-followup-lead="lead-1"/);
+  assert.match(state.element("rows").innerHTML, /data-followup-focus="step">Definir ação/);
+  assert.match(state.element("rows").innerHTML, /data-followup-focus="date">Agendar retorno/);
+  assert.doesNotMatch(state.element("rows").innerHTML, /Sem próxima ação|Sem retorno/);
+  assert.match(state.element("rows").innerHTML, /class="followup-actions"[^]*Definir ação[^]*Agendar retorno/);
   vm.runInContext("openLeadFollowup(leads[0])", state.context);
   assert.equal(state.element("followupDialog").open, true);
   state.element("followupStep").value = "Ligar para confirmar a proposta";
@@ -410,7 +414,7 @@ test("return date requires a next action", async () => {
 
 test("managers can view follow-up data but do not get an edit control", async () => {
   const state = await wallet();
-  assert.match(state.element("rows").innerHTML, /Sem próxima ação definida/);
+  assert.doesNotMatch(state.element("rows").innerHTML, /Sem próxima ação|Sem retorno/);
   assert.doesNotMatch(state.element("rows").innerHTML, /data-followup-lead/);
 });
 
