@@ -257,6 +257,49 @@ test("CSV team preview rejects inactive hierarchy destinations", async () => {
   assert.ok(result[0].errors.includes("Executivo não encontrado ou inválido"));
 });
 
+test("CSV batch creates hierarchy in order and sends only after confirmation", async () => {
+  const { context, element } = await wallet({ loadWallet: false });
+  vm.runInContext('sellerTeamData = { role: "GERENTE", sellers: [], readiness: { ready: true } }; isManager = true', context);
+  const csv = [
+    "perfil,nome,email,whatsapp,regiao,executivo_email,supervisor_email",
+    "VENDEDOR,Vendedor,vendedor@example.test,13999990003,Santos,coord@example.test,supervisor@example.test",
+    "SUPERVISOR,Supervisor,supervisor@example.test,13999990002,Santos,coord@example.test,",
+    "EXECUTIVO,Coordenador,coord@example.test,13999990001,Santos,,"
+  ].join("\n");
+  const requests = [];
+  let pendingSeller = null;
+  let id = 0;
+  context.URL = URL;
+  context.crypto = { randomUUID: () => "00000000-0000-4000-8000-" + String(++id).padStart(12, "0") };
+  context.confirm = () => true;
+  context.sellerApiHeaders = async () => ({ authorization: "Bearer test" });
+  context.sellerQrPng = () => "data:image/png;base64,dGVzdA==";
+  context.renderSellerCsvPreview = () => {};
+  context.loadManagerQrSellers = async () => {};
+  context.fetch = async (_path, options) => {
+    const body = JSON.parse(options.body);
+    requests.push(body);
+    pendingSeller = body;
+    return { ok: true, async json() { return { created: true, active: true, emailStatus: "sent" }; } };
+  };
+  context.loadSellerManagement = async () => {
+    if (!pendingSeller) return;
+    const role = pendingSeller.memberRole;
+    const userId = "user-" + pendingSeller.email;
+    vm.runInContext(`sellerTeamData.sellers.push(${JSON.stringify({
+      email: pendingSeller.email, seller_user_id: userId, role, active: true
+    })})`, context);
+    pendingSeller = null;
+  };
+  vm.runInContext(`sellerCsvRows = validateSellerCsvRows(parseSellerCsv(${JSON.stringify(csv)}))`, context);
+  await vm.runInContext("createSellerCsvBatch()", context);
+  assert.deepEqual(requests.map(request => request.memberRole), ["EXECUTIVO", "SUPERVISOR", "VENDEDOR"]);
+  assert.equal(requests[1].executiveUserId, "user-coord@example.test");
+  assert.equal(requests[2].executiveUserId, "user-coord@example.test");
+  assert.equal(requests[2].supervisorUserId, "user-supervisor@example.test");
+  assert.match(element("sellerCsvStatus").textContent, /Concluído: 3 convite\(s\) enviados/);
+});
+
 test("invite and recovery links show password setup before loading any wallet data", async () => {
   for (const type of ["invite", "recovery"]) {
     const { element, calls } = await wallet({
