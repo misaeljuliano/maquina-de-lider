@@ -1003,18 +1003,18 @@ body{
 .move-team-symbol svg{display:block;width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
 
 button{min-height:var(--wallet-control-height)}
-.lead-status-select{height:var(--wallet-control-height);min-height:var(--wallet-control-height)}
+.lead-status-select{height:32px;min-height:32px;padding:4px 6px;font-size:12px}
 .lead-table{table-layout:auto}
 .lead-table th:nth-child(7),.lead-table td:nth-child(7){width:190px}
-.lead-table th:nth-child(8),.lead-table td:nth-child(8){width:205px}
+.lead-table th:nth-child(8),.lead-table td:nth-child(8){width:230px}
 .lead-table .lead-status-select{display:block;width:100%;max-width:100%;min-width:0}
 .followup-cell{display:flex;min-width:0;flex-direction:column;align-items:flex-start;gap:5px;font-size:12px;line-height:1.35}
-.followup-actions{display:flex;width:100%;min-width:0;align-items:center;gap:6px;flex-wrap:wrap}
+.followup-actions{display:flex;width:100%;min-width:0;align-items:center;gap:5px;flex-wrap:nowrap}
 .followup-cell .followup-detail{max-width:100%;overflow-wrap:anywhere}
 .followup-cell .followup-meta{color:#667085;font-size:11px}
 .followup-cell .followup-overdue{display:inline-block;margin-left:4px;padding:1px 6px;border-radius:999px;background:#fff0f0;color:#b42318;font-size:10px;font-weight:700}
 .followup-cell .followup-empty{color:#667085}
-.followup-cell button{height:auto;min-height:28px;margin:0;padding:4px 9px;border:1px solid #cfd2d8;border-radius:7px;background:#fff;color:#333;font-size:11px;font-weight:650;white-space:nowrap;cursor:pointer}
+.followup-cell button{height:auto;min-height:27px;margin:0;padding:4px 6px;border:1px solid #cfd2d8;border-radius:7px;background:#fff;color:#333;font-size:10px;font-weight:650;white-space:nowrap;cursor:pointer}
 .followup-summary{margin:8px 0 0;padding:8px 10px;border-radius:8px;background:#f5f6f8;font-size:12px}
 .followup-summary.has-overdue{background:#fff4f3;color:#a62c32;font-weight:650}
 [data-followup-lead]{height:auto!important;min-height:0!important}
@@ -1173,6 +1173,7 @@ th{
   .seller-form>#sellerPhone{flex:0 1 112px;width:112px}
   .lead-toolbar{grid-template-columns:1fr}
   .lead-toolbar .export-actions{justify-content:flex-start;flex-wrap:wrap}
+  .followup-actions{flex-wrap:wrap}
 }
 </style>
 </head>
