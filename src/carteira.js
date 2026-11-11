@@ -1603,7 +1603,7 @@ function openLeadFollowup(lead, focus = "step") {
   $("followupDate").value = localDateTimeInput(lead.next_contact_at);
   $("followupError").textContent = "";
   $("followupDialog").showModal();
-  $(focus === "date" ? "followupDate" : "followupStep").focus();
+  $(focus === "date" ? "followupDate" : "followupStep").focus?.();
 }
 
 
@@ -1908,7 +1908,8 @@ function render() {
   followupSummary.textContent = overdueCount
     ? overdueCount + (overdueCount === 1 ? " retorno vencido na sua carteira." : " retornos vencidos na sua carteira.")
     : "Nenhum retorno vencido na sua carteira.";
-  followupSummary.classList.toggle("hidden", overdueCount === 0);
+  if (overdueCount) followupSummary.classList.remove("hidden");
+  else followupSummary.classList.add("hidden");
   if (overdueCount) followupSummary.classList.add("has-overdue");
   else followupSummary.classList.remove("has-overdue");
   filtered.sort((a, b) => Number(isLeadFollowupOverdue(b)) - Number(isLeadFollowupOverdue(a)) ||
