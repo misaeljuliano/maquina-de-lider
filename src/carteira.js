@@ -699,7 +699,7 @@ body{
 }
 
 .wrap{
-  max-width:1480px;
+  max-width:none;
   margin:24px auto;
   padding:0 22px
 }
@@ -1004,6 +1004,10 @@ body{
 
 button{min-height:var(--wallet-control-height)}
 .lead-status-select{height:var(--wallet-control-height);min-height:var(--wallet-control-height)}
+.lead-table{table-layout:auto}
+.lead-table th:nth-child(7),.lead-table td:nth-child(7){width:190px}
+.lead-table th:nth-child(8),.lead-table td:nth-child(8){width:205px}
+.lead-table .lead-status-select{display:block;width:100%;max-width:100%;min-width:0}
 .followup-cell{min-width:0;font-size:12px;line-height:1.45}
 .followup-cell>div{margin:2px 0}
 .followup-cell .followup-overdue{display:inline-block;margin-left:4px;padding:1px 6px;border-radius:999px;background:#fff0f0;color:#b42318;font-size:10px;font-weight:700}
@@ -1895,6 +1899,7 @@ function render() {
   followupSummary.textContent = overdueCount
     ? overdueCount + (overdueCount === 1 ? " retorno vencido na sua carteira." : " retornos vencidos na sua carteira.")
     : "Nenhum retorno vencido na sua carteira.";
+  followupSummary.classList.toggle("hidden", overdueCount === 0);
   if (overdueCount) followupSummary.classList.add("has-overdue");
   else followupSummary.classList.remove("has-overdue");
   filtered.sort((a, b) => Number(isLeadFollowupOverdue(b)) - Number(isLeadFollowupOverdue(a)) ||
