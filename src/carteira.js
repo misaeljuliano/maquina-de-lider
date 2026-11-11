@@ -1009,8 +1009,7 @@ button{min-height:var(--wallet-control-height)}
 .lead-table th:nth-child(8),.lead-table td:nth-child(8){width:205px}
 .lead-table .lead-status-select{display:block;width:100%;max-width:100%;min-width:0}
 .followup-cell{display:flex;min-width:0;flex-direction:column;align-items:flex-start;gap:5px;font-size:12px;line-height:1.35}
-.followup-row{display:flex;width:100%;min-width:0;align-items:center;gap:6px;flex-wrap:wrap}
-.followup-row>span{min-width:0;overflow-wrap:anywhere}
+.followup-actions{display:flex;width:100%;min-width:0;align-items:center;gap:6px;flex-wrap:wrap}
 .followup-cell .followup-detail{max-width:100%;overflow-wrap:anywhere}
 .followup-cell .followup-meta{color:#667085;font-size:11px}
 .followup-cell .followup-overdue{display:inline-block;margin-left:4px;padding:1px 6px;border-radius:999px;background:#fff0f0;color:#b42318;font-size:10px;font-weight:700}
@@ -1568,12 +1567,12 @@ function isLeadFollowupOverdue(lead) {
 function leadFollowupCell(lead) {
   const overdue = isLeadFollowupOverdue(lead);
   const nextAction = lead.next_step
-    ? '<span class="followup-detail"><strong>Ação:</strong> ' + escapeHtml(lead.next_step) + '</span>'
-    : '<span class="followup-empty">Sem próxima ação</span>';
+    ? '<div class="followup-detail"><strong>Ação:</strong> ' + escapeHtml(lead.next_step) + '</div>'
+    : '';
   const nextContact = lead.next_contact_at
-    ? '<span class="followup-meta"><strong>Retorno:</strong> ' + escapeHtml(formatDate(lead.next_contact_at)) +
-      (overdue ? '<span class="followup-overdue">VENCIDO</span>' : '') + '</span>'
-    : '<span class="followup-meta followup-empty">Sem retorno</span>';
+    ? '<div class="followup-meta"><strong>Retorno:</strong> ' + escapeHtml(formatDate(lead.next_contact_at)) +
+      (overdue ? '<span class="followup-overdue">VENCIDO</span>' : '') + '</div>'
+    : '';
   const lastInteraction = lead.last_interaction_at
     ? '<div class="followup-meta">Status atualizado: ' + escapeHtml(formatDate(lead.last_interaction_at)) + '</div>'
     : '';
@@ -1585,8 +1584,8 @@ function leadFollowupCell(lead) {
     ? '<button type="button" data-followup-lead="' + escapeHtml(lead.id) + '" data-followup-focus="date">' +
       (lead.next_contact_at ? 'Alterar retorno' : 'Agendar retorno') + '</button>'
     : '';
-  return '<div class="followup-cell"><div class="followup-row">' + nextAction + actionButton +
-    '</div><div class="followup-row">' + nextContact + contactButton + '</div>' + lastInteraction + '</div>';
+  return '<div class="followup-cell">' + nextAction + nextContact +
+    '<div class="followup-actions">' + actionButton + contactButton + '</div>' + lastInteraction + '</div>';
 }
 
 function localDateTimeInput(value) {
