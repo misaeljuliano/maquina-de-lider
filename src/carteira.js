@@ -1008,11 +1008,13 @@ button{min-height:var(--wallet-control-height)}
 .lead-table th:nth-child(7),.lead-table td:nth-child(7){width:190px}
 .lead-table th:nth-child(8),.lead-table td:nth-child(8){width:205px}
 .lead-table .lead-status-select{display:block;width:100%;max-width:100%;min-width:0}
-.followup-cell{min-width:0;font-size:12px;line-height:1.45}
-.followup-cell>div{margin:2px 0}
+.followup-cell{display:flex;min-width:0;flex-direction:column;align-items:flex-start;gap:3px;font-size:12px;line-height:1.35}
+.followup-cell>div{margin:0}
+.followup-cell .followup-detail{max-width:100%;overflow-wrap:anywhere}
+.followup-cell .followup-meta{color:#667085;font-size:11px}
 .followup-cell .followup-overdue{display:inline-block;margin-left:4px;padding:1px 6px;border-radius:999px;background:#fff0f0;color:#b42318;font-size:10px;font-weight:700}
 .followup-cell .followup-empty{color:#667085}
-.followup-cell button{height:auto;min-height:0;margin-top:5px;padding:4px 7px;border:1px solid #cfd2d8;border-radius:7px;background:#fff;color:#333;font-size:11px;cursor:pointer}
+.followup-cell button{height:auto;min-height:28px;margin-top:2px;padding:4px 9px;border:1px solid #cfd2d8;border-radius:7px;background:#fff;color:#333;font-size:11px;font-weight:650;cursor:pointer}
 .followup-summary{margin:8px 0 0;padding:8px 10px;border-radius:8px;background:#f5f6f8;font-size:12px}
 .followup-summary.has-overdue{background:#fff4f3;color:#a62c32;font-weight:650}
 [data-followup-lead]{height:auto!important;min-height:0!important}
@@ -1565,18 +1567,18 @@ function isLeadFollowupOverdue(lead) {
 function leadFollowupCell(lead) {
   const overdue = isLeadFollowupOverdue(lead);
   const nextAction = lead.next_step
-    ? '<div><strong>Próxima ação:</strong> ' + escapeHtml(lead.next_step) + '</div>'
-    : '<div class="followup-empty">Sem próxima ação definida</div>';
+    ? '<div class="followup-detail"><strong>Ação:</strong> ' + escapeHtml(lead.next_step) + '</div>'
+    : '<div class="followup-empty">Sem próxima ação</div>';
   const nextContact = lead.next_contact_at
-    ? '<div><strong>Retorno:</strong> ' + escapeHtml(formatDate(lead.next_contact_at)) +
+    ? '<div class="followup-meta"><strong>Retorno:</strong> ' + escapeHtml(formatDate(lead.next_contact_at)) +
       (overdue ? '<span class="followup-overdue">VENCIDO</span>' : '') + '</div>'
-    : '<div class="followup-empty">Sem retorno agendado</div>';
+    : '<div class="followup-meta followup-empty">Sem retorno</div>';
   const lastInteraction = lead.last_interaction_at
-    ? '<div class="followup-empty">Última atualização do status: ' + escapeHtml(formatDate(lead.last_interaction_at)) + '</div>'
+    ? '<div class="followup-meta">Status atualizado: ' + escapeHtml(formatDate(lead.last_interaction_at)) + '</div>'
     : '';
   const action = canUpdateLeadStatus
     ? '<button type="button" data-followup-lead="' + escapeHtml(lead.id) + '">' +
-      (lead.next_step || lead.next_contact_at ? 'Editar retorno' : 'Definir retorno') + '</button>'
+      (lead.next_step || lead.next_contact_at ? 'Editar acompanhamento' : 'Agendar retorno') + '</button>'
     : '';
   return '<div class="followup-cell">' + nextAction + nextContact + lastInteraction + action + '</div>';
 }
