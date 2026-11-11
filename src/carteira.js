@@ -699,7 +699,7 @@ body{
 }
 
 .wrap{
-  max-width:1480px;
+  max-width:none;
   margin:24px auto;
   padding:0 22px
 }
@@ -1003,7 +1003,30 @@ body{
 .move-team-symbol svg{display:block;width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
 
 button{min-height:var(--wallet-control-height)}
-.lead-status-select{height:var(--wallet-control-height);min-height:var(--wallet-control-height)}
+.lead-status-select{height:32px;min-height:32px;padding:4px 6px;font-size:12px}
+.lead-table{table-layout:auto}
+.lead-table th:nth-child(7),.lead-table td:nth-child(7){width:190px}
+.lead-table th:nth-child(8),.lead-table td:nth-child(8){width:230px}
+.lead-table .lead-status-select{display:block;width:100%;max-width:100%;min-width:0}
+.followup-cell{display:flex;min-width:0;flex-direction:column;align-items:flex-start;gap:5px;font-size:12px;line-height:1.35}
+.followup-actions{display:flex;width:100%;min-width:0;align-items:center;gap:5px;flex-wrap:nowrap}
+.followup-cell .followup-detail{max-width:100%;overflow-wrap:anywhere}
+.followup-cell .followup-meta{color:#667085;font-size:11px}
+.followup-cell .followup-overdue{display:inline-block;margin-left:4px;padding:1px 6px;border-radius:999px;background:#fff0f0;color:#b42318;font-size:10px;font-weight:700}
+.followup-cell .followup-empty{color:#667085}
+.followup-cell button{height:auto;min-height:27px;margin:0;padding:4px 6px;border:1px solid #cfd2d8;border-radius:7px;background:#fff;color:#333;font-size:10px;font-weight:650;white-space:nowrap;cursor:pointer}
+.followup-summary{margin:8px 0 0;padding:8px 10px;border-radius:8px;background:#f5f6f8;font-size:12px}
+.followup-summary.has-overdue{background:#fff4f3;color:#a62c32;font-weight:650}
+[data-followup-lead]{height:auto!important;min-height:0!important}
+#followupDialog{width:min(520px,calc(100vw - 24px));max-width:none;padding:20px;border:1px solid #e2e5e9;border-radius:14px;box-shadow:0 18px 50px rgba(24,32,45,.2)}
+#followupDialog::backdrop{background:rgba(20,24,32,.42)}
+#followupDialog form{display:grid;gap:9px}
+#followupDialog h2{margin:0 0 4px}
+#followupDialog label{font-size:13px;font-weight:650}
+#followupDialog textarea,#followupDialog input{width:100%;min-height:var(--wallet-control-height);padding:9px 11px;border:1px solid #cfd2d8;border-radius:8px;font:inherit}
+#followupDialog textarea{resize:vertical}
+#followupDialog p{min-height:18px;margin:0;color:#b00020;font-size:12px}
+#followupDialog button{justify-self:start;min-height:36px;padding:7px 11px;border-radius:8px}
 [data-observation-lead]{height:var(--wallet-control-height);padding:0 10px}
 .lead-table th,.lead-table td{text-align:left}
 .lead-table [data-observation-lead]{display:inline-flex;align-items:center;justify-content:flex-start;width:max-content;max-width:100%;white-space:nowrap;text-align:left}
@@ -1150,6 +1173,7 @@ th{
   .seller-form>#sellerPhone{flex:0 1 112px;width:112px}
   .lead-toolbar{grid-template-columns:1fr}
   .lead-toolbar .export-actions{justify-content:flex-start;flex-wrap:wrap}
+  .followup-actions{flex-wrap:wrap}
 }
 </style>
 </head>
@@ -1380,6 +1404,8 @@ th{
 
     <div id="managerMessage" class="muted" role="status" aria-live="polite"></div>
 
+    <div id="followupSummary" class="followup-summary muted" role="status" aria-live="polite"></div>
+
 
     <div class="table-wrap">
 
@@ -1396,6 +1422,7 @@ th{
             <th>Produto de interesse</th>
             <th>Data/Hora</th>
             <th>Status</th>
+            <th>Acompanhamento</th>
             <th id="managerObservationHeader" class="hidden">Observação</th>
             <th id="managerCrmHeader" class="hidden">ID no CRM</th>
 
@@ -1424,6 +1451,19 @@ th{
     <p id="observationError" role="alert"></p>
     <button type="button" id="cancelObservation">Cancelar</button>
     <button type="submit" id="saveObservation">Salvar</button>
+  </form>
+</dialog>
+
+<dialog id="followupDialog" aria-labelledby="followupTitle">
+  <form id="followupForm">
+    <h2 id="followupTitle">Acompanhamento do lead</h2>
+    <label for="followupStep">Próxima ação (até 500 caracteres)</label>
+    <textarea id="followupStep" rows="3" maxlength="500" placeholder="Ex.: retornar com a proposta"></textarea>
+    <label for="followupDate">Data e hora do retorno</label>
+    <input id="followupDate" type="datetime-local">
+    <p id="followupError" role="alert"></p>
+    <button type="button" id="cancelFollowup">Cancelar</button>
+    <button type="submit" id="saveFollowup">Salvar acompanhamento</button>
   </form>
 </dialog>
 
@@ -1485,6 +1525,8 @@ const LEAD_STATUS_OPTIONS = [
 ];
 
 
+let editingFollowupLead = null;
+
 const $ = id =>
   document.getElementById(id);
 
@@ -1514,6 +1556,54 @@ function leadStatusSelect(lead) {
     currentStatus +
     LEAD_STATUS_OPTIONS.map(([value, label]) => '<option value="' + value + '"' + (lead.status === value ? " selected" : "") + '>' + label + '</option>').join("") +
     '</select>';
+}
+
+
+function isLeadFollowupOverdue(lead) {
+  if (!lead.next_contact_at || ["VENDA", "CONECTADO", "NAO_VENDA"].includes(lead.status)) return false;
+  const due = new Date(lead.next_contact_at).getTime();
+  return Number.isFinite(due) && due <= Date.now();
+}
+
+function leadFollowupCell(lead) {
+  const overdue = isLeadFollowupOverdue(lead);
+  const nextAction = lead.next_step
+    ? '<div class="followup-detail"><strong>Ação:</strong> ' + escapeHtml(lead.next_step) + '</div>'
+    : '';
+  const nextContact = lead.next_contact_at
+    ? '<div class="followup-meta"><strong>Retorno:</strong> ' + escapeHtml(formatDate(lead.next_contact_at)) +
+      (overdue ? '<span class="followup-overdue">VENCIDO</span>' : '') + '</div>'
+    : '';
+  const lastInteraction = lead.last_interaction_at
+    ? '<div class="followup-meta">Status atualizado: ' + escapeHtml(formatDate(lead.last_interaction_at)) + '</div>'
+    : '';
+  const actionButton = canUpdateLeadStatus
+    ? '<button type="button" data-followup-lead="' + escapeHtml(lead.id) + '" data-followup-focus="step">' +
+      (lead.next_step ? 'Editar ação' : 'Definir ação') + '</button>'
+    : '';
+  const contactButton = canUpdateLeadStatus
+    ? '<button type="button" data-followup-lead="' + escapeHtml(lead.id) + '" data-followup-focus="date">' +
+      (lead.next_contact_at ? 'Alterar retorno' : 'Agendar retorno') + '</button>'
+    : '';
+  return '<div class="followup-cell">' + nextAction + nextContact +
+    '<div class="followup-actions">' + actionButton + contactButton + '</div>' + lastInteraction + '</div>';
+}
+
+function localDateTimeInput(value) {
+  if (!value) return '';
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return '';
+  return new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+}
+
+function openLeadFollowup(lead, focus = "step") {
+  if (!canUpdateLeadStatus || !lead) return;
+  editingFollowupLead = lead;
+  $("followupStep").value = lead.next_step || "";
+  $("followupDate").value = localDateTimeInput(lead.next_contact_at);
+  $("followupError").textContent = "";
+  $("followupDialog").showModal();
+  $(focus === "date" ? "followupDate" : "followupStep").focus?.();
 }
 
 
@@ -1704,7 +1794,7 @@ async function loadLeads() {
     ({ data, error } = await client
       .from("leads")
       .select(
-        "id,name,customer_phone,address,has_claro,product_searched,status,created_at,seller_id"
+        "id,name,customer_phone,address,has_claro,product_searched,status,created_at,seller_id,next_step,next_contact_at,last_interaction_at,last_interaction_type"
       )
       .order(
         "created_at",
@@ -1777,7 +1867,7 @@ function render() {
     $("status").value;
 
 
-  const filtered =
+  let filtered =
     leads.filter(lead => {
 
       const matchesSearch =
@@ -1812,6 +1902,18 @@ function render() {
 
     });
 
+
+  const overdueCount = leads.filter(isLeadFollowupOverdue).length;
+  const followupSummary = $("followupSummary");
+  followupSummary.textContent = overdueCount
+    ? overdueCount + (overdueCount === 1 ? " retorno vencido na sua carteira." : " retornos vencidos na sua carteira.")
+    : "Nenhum retorno vencido na sua carteira.";
+  if (overdueCount) followupSummary.classList.remove("hidden");
+  else followupSummary.classList.add("hidden");
+  if (overdueCount) followupSummary.classList.add("has-overdue");
+  else followupSummary.classList.remove("has-overdue");
+  filtered.sort((a, b) => Number(isLeadFollowupOverdue(b)) - Number(isLeadFollowupOverdue(a)) ||
+    new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
 
   $("total").textContent =
     leads.length;
@@ -1850,7 +1952,7 @@ function render() {
 
     $("rows").innerHTML =
       "<tr>" +
-      "<td colspan=\\\"" + (isManager ? "9" : "7") + "\\\" class=\\\"empty\\\">" +
+      "<td colspan=\\\"" + (isManager ? "10" : "8") + "\\\" class=\\\"empty\\\">" +
       "Nenhum lead encontrado na sua carteira." +
       "</td>" +
       "</tr>";
@@ -1909,6 +2011,8 @@ function render() {
           : escapeHtml(lead.status)) +
         "</td>" +
 
+        "<td data-label=\\\"Acompanhamento\\\">" + leadFollowupCell(lead) + "</td>" +
+
         (isManager ?
           "<td data-label=\\\"Observação\\\">" + escapeHtml(lead.observation) +
           (lead.observation !== undefined ? '<br><button type="button" data-observation-lead="' +
@@ -1931,7 +2035,7 @@ $("rows").addEventListener("change", async event => {
   select.disabled = true;
   try {
     const { data, error } = await client.from("leads").update({ status: nextStatus })
-      .eq("id", lead.id).select("id").maybeSingle();
+      .eq("id", lead.id).select("id,last_interaction_at,last_interaction_type").maybeSingle();
     if (error) throw error;
     if (!data?.id) throw new Error("Lead não encontrado ou sem permissão para atualizar.");
     lead.status = nextStatus;
@@ -1942,6 +2046,61 @@ $("rows").addEventListener("change", async event => {
     console.error(error);
   } finally {
     if (select.isConnected) select.disabled = false;
+  }
+});
+
+
+$('rows').addEventListener('click', event => {
+  const button = event.target.closest('[data-followup-lead]');
+  if (!button || !canUpdateLeadStatus) return;
+  const lead = leads.find(item => item.id === button.dataset.followupLead);
+  openLeadFollowup(lead, button.dataset.followupFocus);
+});
+
+$("cancelFollowup").onclick = () => $("followupDialog").close();
+$("followupDialog").addEventListener("close", () => {
+  $("followupStep").value = "";
+  $("followupDate").value = "";
+  $("followupError").textContent = "";
+  editingFollowupLead = null;
+});
+
+$("followupForm").addEventListener("submit", async event => {
+  event.preventDefault();
+  const lead = editingFollowupLead;
+  const save = $("saveFollowup");
+  const stepInput = $("followupStep");
+  const dateInput = $("followupDate");
+  const errorMessage = $("followupError");
+  if (!canUpdateLeadStatus || !lead || save.disabled) return;
+
+  const nextStep = stepInput.value.trim() || null;
+  const nextContactValue = dateInput.value;
+  if (nextContactValue && !nextStep) {
+    errorMessage.textContent = "Descreva a próxima ação para agendar o retorno.";
+    return;
+  }
+  const nextContactAt = nextContactValue ? new Date(nextContactValue).toISOString() : null;
+  errorMessage.textContent = "";
+  save.disabled = $("cancelFollowup").disabled = stepInput.disabled = dateInput.disabled = true;
+  try {
+    const { data, error } = await client.from("leads")
+      .update({ next_step: nextStep, next_contact_at: nextContactAt })
+      .eq("id", lead.id)
+      .select("id,next_step,next_contact_at,last_interaction_at,last_interaction_type")
+      .maybeSingle();
+    if (error) throw error;
+    if (!data?.id) throw new Error("Lead não encontrado ou sem permissão para atualizar.");
+    Object.assign(lead, data);
+    $("followupDialog").close();
+    render();
+    $("message").textContent = "Acompanhamento salvo.";
+  } catch (error) {
+    errorMessage.textContent = error.code === "42501"
+      ? "Seu perfil não tem permissão para atualizar o acompanhamento."
+      : "Não foi possível salvar o acompanhamento. Tente novamente.";
+  } finally {
+    save.disabled = $("cancelFollowup").disabled = stepInput.disabled = dateInput.disabled = false;
   }
 });
 
@@ -2263,8 +2422,8 @@ async function showApp() {
 
   const roleRows = roles || [];
   isManager = roleRows.some(role => role.role === "GERENTE");
-  canUpdateLeadStatus = roleRows.some(role => role.role === "VENDEDOR");
   leaderRole = roleRows.map(role => role.role).find(role => ["GERENTE", "EXECUTIVO", "SUPERVISOR"].includes(role)) || "";
+  canUpdateLeadStatus = roleRows.some(role => role.role === "VENDEDOR") && !leaderRole;
 
   if (roleRows.some(role => role.role === "VENDEDOR") || (!isManager && ["EXECUTIVO", "SUPERVISOR"].includes(leaderRole))) {
     const { data: activeSeller, error: sellerAccessError } = await getActiveSellerAccess();
