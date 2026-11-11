@@ -714,7 +714,7 @@ body{
 }
 
 .hidden{
-  display:none
+  display:none!important
 }
 
 .login{
