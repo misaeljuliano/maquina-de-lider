@@ -227,6 +227,42 @@ test("CSV team preview parses quoted cells and validates hierarchy by e-mail", a
   assert.ok(result.every(row => row.errors.length === 0), JSON.stringify(result.map(row => row.errors)));
 });
 
+test("CSV import allows a supervisor to link multiple executives without widening seller assignment", async () => {
+  const { context } = await wallet({ loadWallet: false });
+  const executives = [
+    { email: "julio@example.test", seller_user_id: "user-julio", role: "EXECUTIVO", active: true },
+    { email: "adriana@example.test", seller_user_id: "user-adriana", role: "EXECUTIVO", active: true }
+  ];
+  vm.runInContext("sellerTeamData = " + JSON.stringify({ role: "GERENTE", sellers: executives, readiness: { ready: true } }), context);
+  const csv = [
+    "perfil,nome,email,whatsapp,regiao,executivo_emails,supervisor_email",
+    "SUPERVISOR,Bruna Scomparim,bruna@example.test,13999990000,Santos,julio@example.test;adriana@example.test,",
+    "VENDEDOR,Vendedor teste,vendedor@example.test,13999990001,Santos,julio@example.test,bruna@example.test"
+  ].join("\n");
+  const rows = JSON.parse(JSON.stringify(vm.runInContext(
+    `validateSellerCsvRows(parseSellerCsv(${JSON.stringify(csv)}))`, context
+  )));
+  assert.ok(rows.every(row => row.errors.length === 0), JSON.stringify(rows.map(row => row.errors)));
+  assert.deepEqual(rows[0].executiveEmails, ["julio@example.test", "adriana@example.test"]);
+  vm.runInContext(`sellerCsvRows = validateSellerCsvRows(parseSellerCsv(${JSON.stringify(csv)}))`, context);
+
+  context.URL = URL;
+  context.crypto = { randomUUID: () => "00000000-0000-4000-8000-000000000099" };
+  context.sellerApiHeaders = async () => ({ authorization: "Bearer test" });
+  context.sellerQrPng = () => "data:image/png;base64,dGVzdA==";
+  let sentBody;
+  context.fetch = async (_path, options) => {
+    sentBody = JSON.parse(options.body);
+    return { ok: true, async json() { return { created: true, active: true, emailStatus: "sent" }; } };
+  };
+
+  await vm.runInContext("createSellerFromCsv(sellerCsvRows[0])", context);
+  assert.deepEqual(sentBody.executiveUserIds, ["user-julio", "user-adriana"]);
+  assert.equal(sentBody.executiveUserId, "user-julio");
+  assert.equal(sentBody.supervisorUserId, null);
+  assert.equal(rows[1].executiveEmails.length, 1, "a seller remains assigned to one executive");
+});
+
 test("CSV team preview blocks duplicate e-mails and invalid phone numbers", async () => {
   const { context } = await wallet({ loadWallet: false });
   vm.runInContext('sellerTeamData = { role: "GERENTE", sellers: [], readiness: { ready: true } }', context);
