@@ -26,10 +26,30 @@ test("preview seller onboarding sends a staging invitation and the matching QR a
     if (url.pathname === "/auth/v1/admin/generate_link") {
       assert.equal(url.searchParams.get("redirect_to"), preview.WALLET_PUBLIC_ORIGIN + "/carteira");
       assert.equal(JSON.parse(init.body).data.role, "VENDEDOR");
-      return Response.json({ id, action_link: invite });
+      return Response.json({ properties: { action_link: invite }, user: { id } });
     }
-    if (url.pathname === "/rest/v1/user_roles" && !init.method) {
-      return Response.json([{ role: "GERENTE" }]);
+    if (url.pathname === "/rest/v1/user_roles") {
+      if (init.method === "POST") return Response.json([]);
+      const filter = url.searchParams.get("user_id") || "";
+      if (filter === "eq." + id) return Response.json([{ user_id: id, role: "GERENTE" }]);
+      if (filter === "in.(70000000-0000-4000-8000-000000000002)") {
+        return Response.json([{ user_id: "70000000-0000-4000-8000-000000000002", role: "EXECUTIVO" }]);
+      }
+    }
+    if (url.pathname === "/rest/v1/sellers") {
+      if (init.method === "POST") return Response.json([JSON.parse(init.body)]);
+      if (url.searchParams.get("seller_user_id") === "eq.70000000-0000-4000-8000-000000000002") {
+        return Response.json([{
+          id: "70000000-0000-4000-8000-000000000003",
+          seller_user_id: "70000000-0000-4000-8000-000000000002",
+          name: "Executivo teste", active: true, executive_user_id: null, supervisor_user_id: null
+        }]);
+      }
+      return Response.json([{
+        id: "70000000-0000-4000-8000-000000000003",
+        seller_user_id: "70000000-0000-4000-8000-000000000002",
+        name: "Executivo teste", active: true, executive_user_id: null, supervisor_user_id: null
+      }]);
     }
     return Response.json([]);
   });
@@ -38,7 +58,8 @@ test("preview seller onboarding sends a staging invitation and the matching QR a
     headers: { authorization: "Bearer test-token" },
     body: JSON.stringify({
       sellerId: id, name: "Vendedor Teste", email: "seller@example.test",
-      phone: "11900000000", region: "Teste", qrPng: "data:image/png;base64," + qr
+      phone: "11900000000", region: "Teste", qrPng: "data:image/png;base64," + qr,
+      executiveUserId: "70000000-0000-4000-8000-000000000002"
     })
   }), {
     ...preview, SUPABASE_SERVICE_ROLE_KEY: "test-secret",
@@ -81,12 +102,13 @@ test("wallet preview embeds only its configured public Supabase credentials", as
   assert.match(html, /<input id="sellerPhone" type="tel" class="seller-phone-field" placeholder="WhatsApp" aria-label="WhatsApp" required>/);
   assert.doesNotMatch(html, /<th>Envios<\/th>/);
   assert.match(html, /\.whatsapp-icon\{background:#31bd68!important;color:#fff!important/);
-  assert.match(html, /moveTeam\.setAttribute\("aria-label", "Levar vendedores da equipe junto com o supervisor"\)/);
-  assert.doesNotMatch(html, /createTextNode\("Levar equipe junto"\)/);
+  assert.match(html, /function openSupervisorTransferDialog\(supervisor, select\)/);
+  assert.match(html, /checkbox\.type = "checkbox"/);
+  assert.match(html, /moveSellerIds: selectedSellerIds/);
   assert.match(html, /group\.append\(transfer, select\)/);
   assert.match(html, /\.lead-toolbar\{display:grid;grid-template-columns:minmax\(0,3fr\) minmax\(0,1\.5fr\)/);
   assert.match(html, /move-team-symbol/);
-  assert.match(html, /actionCell\.append\(group\);\s*if \(seller\.role === "SUPERVISOR"\) actionCell\.append\(moveTeamLabel\);/);
+  assert.match(html, /actionCell\.append\(group\)/);
   assert.match(html, /aria-label", "Transferir " \+ seller\.name/);
   assert.match(html, /aria-label", "Abrir WhatsApp para " \+ seller\.name/);
   assert.doesNotMatch(html, /min-width:\s*900px/);

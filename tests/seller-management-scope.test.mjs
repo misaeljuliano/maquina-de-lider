@@ -20,6 +20,7 @@ async function exerciseLeaderScope(t, role) {
   const otherLeaderId = "70000000-0000-4000-8000-000000000022";
   const executiveId = role === "EXECUTIVO" ? leaderId : "70000000-0000-4000-8000-000000000023";
   const supervisorId = role === "SUPERVISOR" ? leaderId : "70000000-0000-4000-8000-000000000024";
+  const supervisorExecutiveLinks = [{ supervisor_user_id: supervisorId, executive_user_id: executiveId }];
   const ownSeller = {
     id: ownSellerId, slug: "seller-own", name: "Vendedor da equipe",
     phone: "11900000000", region: "Teste", active: true,
@@ -60,6 +61,14 @@ async function exerciseLeaderScope(t, role) {
     if (url.pathname === "/rest/v1/seller_onboarding") {
       return Response.json([{ seller_id: ownSellerId, email_status: "sent", whatsapp_status: "pending" }]);
     }
+    if (url.pathname === "/rest/v1/supervisor_executives") {
+      const supervisorFilter = url.searchParams.get("supervisor_user_id") || "";
+      const executiveFilter = url.searchParams.get("executive_user_id") || "";
+      return Response.json(supervisorExecutiveLinks.filter(link =>
+        (!supervisorFilter || supervisorFilter === "eq." + link.supervisor_user_id)
+        && (!executiveFilter || executiveFilter === "eq." + link.executive_user_id)
+      ));
+    }
     if (url.pathname === "/rest/v1/sellers" && init.method === "PATCH") {
       return Response.json([{ active: false }]);
     }
@@ -78,7 +87,7 @@ async function exerciseLeaderScope(t, role) {
       const idFilter = url.searchParams.get("id");
       if (idFilter === "eq." + ownSellerId) return Response.json([ownSeller]);
       if (idFilter === "eq." + otherSellerId) return Response.json([otherSeller]);
-      if (url.searchParams.has("executive_user_id") || url.searchParams.has("supervisor_user_id")) {
+      if (url.searchParams.has("or") || url.searchParams.has("executive_user_id") || url.searchParams.has("supervisor_user_id")) {
         return Response.json([ownSeller]);
       }
       return Response.json([]);

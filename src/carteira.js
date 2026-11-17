@@ -349,9 +349,7 @@ async function transferTeamMember(env, leader, target, targetRole, body) {
     }
   } else if (targetRole === "VENDEDOR") {
     const inScope = leader.role === "GERENTE"
-      || (leader.role === "EXECUTIVO" && (target.executive_user_id === leader.user.id
-        || (target.supervisor_user_id && team.some(item => item.seller_user_id === target.supervisor_user_id
-          && item.active && roleMap[item.seller_user_id] === "SUPERVISOR"))))
+      || (leader.role === "EXECUTIVO" && target.executive_user_id === leader.user.id)
       || (leader.role === "SUPERVISOR" && target.supervisor_user_id === leader.user.id);
     if (!inScope) return jsonResponse({ error: "Esse vendedor não pertence à sua equipe." }, 403);
 
