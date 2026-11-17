@@ -26,7 +26,7 @@ function json(data, status = 200) {
   return Response.json(data, { status });
 }
 
-function installAPI(t, { role, userId, team = [], profiles = [], roleMap = {}, target = null, onCall = () => {} }) {
+function installAPI(t, { role, userId, team = [], profiles = [], roleMap = {}, target = null, supervisorExecutiveLinks = [], resolveExactRole = false, onCall = () => {} }) {
   const calls = [];
   t.mock.method(globalThis, "fetch", async (input, init = {}) => {
     const url = new URL(input);
@@ -49,9 +49,20 @@ function installAPI(t, { role, userId, team = [], profiles = [], roleMap = {}, t
     }
     if (url.pathname === "/rest/v1/user_roles") {
       const exact = url.searchParams.get("user_id");
-      if (exact?.startsWith("eq.")) return json([{ role }]);
+      if (exact?.startsWith("eq.")) {
+        const id = exact.slice(3);
+        return json([{ user_id: id, role: resolveExactRole ? roleMap[id] || role : role }]);
+      }
       const foundIds = (exact?.match(/in\.\((.*)\)/)?.[1] || "").split(",");
       return json(foundIds.filter(id => roleMap[id]).map(id => ({ user_id: id, role: roleMap[id] })));
+    }
+    if (url.pathname === "/rest/v1/supervisor_executives") {
+      const supervisorFilter = url.searchParams.get("supervisor_user_id") || "";
+      const executiveFilter = url.searchParams.get("executive_user_id") || "";
+      return json(supervisorExecutiveLinks.filter(link =>
+        (!supervisorFilter || supervisorFilter === "eq." + link.supervisor_user_id)
+        && (!executiveFilter || executiveFilter === "eq." + link.executive_user_id)
+      ));
     }
     if (url.pathname === "/rest/v1/sellers") {
       if (method === "POST") return json([body]);
@@ -184,6 +195,39 @@ test("executive cannot transfer a seller into another executive's supervisor", a
 
   assert.equal(response.status, 403);
   assert.equal(calls.some(call => call.url.pathname === "/rest/v1/rpc/transfer_seller_hierarchy"), false);
+});
+
+test("executive cannot manage a seller assigned to another executive through a shared supervisor", async t => {
+  const supervisorProfile = {
+    id: "80000000-0000-4000-8000-000000000010", seller_user_id: ids.supervisor,
+    active: true, executive_user_id: ids.executive, supervisor_user_id: null
+  };
+  const otherExecutiveSeller = {
+    id: "80000000-0000-4000-8000-000000000011", seller_user_id: ids.seller,
+    active: true, executive_user_id: ids.executive2, supervisor_user_id: ids.supervisor
+  };
+  const calls = installAPI(t, {
+    role: "EXECUTIVO", userId: ids.executive,
+    team: [supervisorProfile, otherExecutiveSeller], profiles: [supervisorProfile],
+    target: otherExecutiveSeller,
+    resolveExactRole: true,
+    roleMap: { [ids.executive]: "EXECUTIVO", [ids.executive2]: "EXECUTIVO", [ids.supervisor]: "SUPERVISOR", [ids.seller]: "VENDEDOR" },
+    supervisorExecutiveLinks: [
+      { supervisor_user_id: ids.supervisor, executive_user_id: ids.executive },
+      { supervisor_user_id: ids.supervisor, executive_user_id: ids.executive2 }
+    ]
+  });
+
+  const response = await worker.fetch(new Request("https://wallet-staging.example.test/api/sellers/" + otherExecutiveSeller.id, {
+    method: "PATCH", headers: { authorization: "Bearer test-token", "content-type": "application/json" },
+    body: JSON.stringify({ active: false })
+  }), preview);
+
+  assert.equal(response.status, 403);
+  assert.equal(calls.some(call => call.url.pathname === "/rest/v1/sellers" && call.method === "PATCH"), false);
+  assert.equal(calls.some(call => call.url.pathname === "/rest/v1/rpc/transfer_seller_hierarchy"), false);
+  const teamQuery = calls.find(call => call.url.pathname === "/rest/v1/sellers" && call.method === "GET" && call.url.searchParams.has("select"));
+  assert.doesNotMatch(teamQuery.url.searchParams.get("or") || "", /supervisor_user_id/);
 });
 
 test("executive can reassign a seller to a supervisor in the same team", async t => {

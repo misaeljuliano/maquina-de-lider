@@ -227,7 +227,9 @@ async function getTeamRows(env, leader) {
     if (!links.ok || !Array.isArray(links.data)) return null;
     const supervisorIds = [...new Set(links.data.map(item => item.supervisor_user_id).filter(id => SELLER_ID_RE.test(id || "")))];
     if (supervisorIds.length) {
-      params.set("or", "(executive_user_id.eq." + leader.user.id + ",seller_user_id.in.(" + supervisorIds.join(",") + "),supervisor_user_id.in.(" + supervisorIds.join(",") + "))");
+      // A supervisor association grants visibility of the supervisor profile,
+      // but sellers must be explicitly assigned to this executive.
+      params.set("or", "(executive_user_id.eq." + leader.user.id + ",seller_user_id.in.(" + supervisorIds.join(",") + "))");
     } else params.set("executive_user_id", "eq." + leader.user.id);
   }
   if (leader.role === "SUPERVISOR") params.set("supervisor_user_id", "eq." + leader.user.id);
@@ -346,9 +348,7 @@ async function transferTeamMember(env, leader, target, targetRole, body) {
     }
   } else if (targetRole === "VENDEDOR") {
     const inScope = leader.role === "GERENTE"
-      || (leader.role === "EXECUTIVO" && (target.executive_user_id === leader.user.id
-        || (target.supervisor_user_id && team.some(item => item.seller_user_id === target.supervisor_user_id
-          && item.active && roleMap[item.seller_user_id] === "SUPERVISOR"))))
+      || (leader.role === "EXECUTIVO" && target.executive_user_id === leader.user.id)
       || (leader.role === "SUPERVISOR" && target.supervisor_user_id === leader.user.id);
     if (!inScope) return jsonResponse({ error: "Esse vendedor não pertence à sua equipe." }, 403);
 
