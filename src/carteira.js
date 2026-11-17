@@ -227,7 +227,7 @@ async function getTeamRows(env, leader) {
     if (!links.ok || !Array.isArray(links.data)) return null;
     const supervisorIds = [...new Set(links.data.map(item => item.supervisor_user_id).filter(id => SELLER_ID_RE.test(id || "")))];
     if (supervisorIds.length) {
-      params.set("or", "(executive_user_id.eq." + leader.user.id + ",seller_user_id.in.(" + supervisorIds.join(",") + "))");
+      params.set("or", "(executive_user_id.eq." + leader.user.id + ",seller_user_id.in.(" + supervisorIds.join(",") + "),supervisor_user_id.in.(" + supervisorIds.join(",") + "))");
     } else params.set("executive_user_id", "eq." + leader.user.id);
   }
   if (leader.role === "SUPERVISOR") params.set("supervisor_user_id", "eq." + leader.user.id);
@@ -320,7 +320,7 @@ async function transferTeamMember(env, leader, target, targetRole, body) {
   const destinationSupervisor = String(body.supervisorUserId || "") || null;
   let executiveUserId = null;
   let supervisorUserId = null;
-  let moveTeam = false;
+  let moveSellerIds = [];
 
   if (targetRole === "EXECUTIVO") {
     return jsonResponse({ error: "Um executivo não pode ser transferido para outra carteira." }, 400);
@@ -334,13 +334,21 @@ async function transferTeamMember(env, leader, target, targetRole, body) {
       return jsonResponse({ error: "O executivo de destino não está ativo na equipe." }, 400);
     }
     executiveUserId = destinationExecutive;
-    moveTeam = body.moveTeam === true;
-    if (body.moveTeam !== true && body.moveTeam !== false) {
-      return jsonResponse({ error: "Escolha se os vendedores da equipe acompanham o supervisor." }, 400);
+    if (!Array.isArray(body.moveSellerIds) || body.moveSellerIds.some(id => !SELLER_ID_RE.test(id || ""))) {
+      return jsonResponse({ error: "Selecione quais vendedores acompanham o supervisor." }, 400);
+    }
+    moveSellerIds = [...new Set(body.moveSellerIds)];
+    const availableSellerIds = new Set(team
+      .filter(item => item.supervisor_user_id === target.seller_user_id && item.seller_user_id && roleMap[item.seller_user_id] === "VENDEDOR")
+      .map(item => item.id));
+    if (moveSellerIds.some(id => !availableSellerIds.has(id))) {
+      return jsonResponse({ error: "A equipe mudou. Atualize a carteira e selecione os vendedores novamente." }, 409);
     }
   } else if (targetRole === "VENDEDOR") {
     const inScope = leader.role === "GERENTE"
-      || (leader.role === "EXECUTIVO" && target.executive_user_id === leader.user.id)
+      || (leader.role === "EXECUTIVO" && (target.executive_user_id === leader.user.id
+        || (target.supervisor_user_id && team.some(item => item.seller_user_id === target.supervisor_user_id
+          && item.active && roleMap[item.seller_user_id] === "SUPERVISOR"))))
       || (leader.role === "SUPERVISOR" && target.supervisor_user_id === leader.user.id);
     if (!inScope) return jsonResponse({ error: "Esse vendedor não pertence à sua equipe." }, 403);
 
@@ -391,7 +399,7 @@ async function transferTeamMember(env, leader, target, targetRole, body) {
     }
   }
 
-  const response = await serviceRequest(env, "/rest/v1/rpc/transfer_seller_hierarchy", {
+  const response = await serviceRequest(env, "/rest/v1/rpc/transfer_seller_hierarchy_selection", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
@@ -400,7 +408,7 @@ async function transferTeamMember(env, leader, target, targetRole, body) {
       p_expected_executive_user_id: target.executive_user_id || null,
       p_new_supervisor_user_id: supervisorUserId,
       p_new_executive_user_id: executiveUserId,
-      p_move_team: moveTeam
+      p_move_seller_ids: moveSellerIds
     })
   });
   if (!response.ok) {
@@ -408,7 +416,7 @@ async function transferTeamMember(env, leader, target, targetRole, body) {
       ? "A equipe mudou durante a transferência. Atualize a carteira e tente novamente."
       : "Não foi possível concluir a transferência da equipe." }, response.status === 409 ? 409 : 503);
   }
-  return jsonResponse({ ok: true, role: targetRole, executiveUserId, supervisorUserId, moveTeam });
+  return jsonResponse({ ok: true, role: targetRole, executiveUserId, supervisorUserId, movedSellerCount: moveSellerIds.length });
 }
 
 async function leaderSellersApi(request, env, url) {
@@ -1125,6 +1133,18 @@ button{min-height:var(--wallet-control-height)}
 #followupDialog textarea{resize:vertical}
 #followupDialog p{min-height:18px;margin:0;color:#b00020;font-size:12px}
 #followupDialog button{justify-self:start;min-height:36px;padding:7px 11px;border-radius:8px}
+#sellerTeamTransferDialog{width:min(520px,calc(100vw - 24px));max-width:none;max-height:min(80vh,720px);padding:20px;border:1px solid #e2e5e9;border-radius:14px;box-shadow:0 18px 50px rgba(24,32,45,.2)}
+#sellerTeamTransferDialog::backdrop{background:rgba(20,24,32,.42)}
+#sellerTeamTransferDialog form{display:grid;gap:10px}
+#sellerTeamTransferDialog h2{margin:0}
+#sellerTeamTransferDialog p{margin:0;color:#667085;font-size:13px}
+.team-transfer-list{display:grid;gap:5px;max-height:42vh;overflow:auto;padding:4px;border:1px solid #e2e5e9;border-radius:9px}
+.team-transfer-choice{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:8px;padding:8px;border-radius:6px;cursor:pointer}
+.team-transfer-choice:hover{background:#f5f6f8}
+.team-transfer-choice input{width:16px;height:16px;margin:0;accent-color:#d40000}
+.team-transfer-choice small{color:#667085}
+.team-transfer-dialog-actions{display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap}
+#sellerTeamTransferDialog button{min-height:34px;padding:6px 10px;border-radius:8px}
 [data-observation-lead]{height:var(--wallet-control-height);padding:0 10px}
 .lead-table th,.lead-table td{text-align:left}
 .lead-table [data-observation-lead]{display:inline-flex;align-items:center;justify-content:flex-start;width:max-content;max-width:100%;white-space:nowrap;text-align:left}
@@ -1460,6 +1480,18 @@ th{
     </div>
   </section>
 
+  <dialog id="sellerTeamTransferDialog" aria-labelledby="sellerTeamTransferTitle">
+    <form id="sellerTeamTransferForm">
+      <h2 id="sellerTeamTransferTitle">Transferir supervisor e vendedores</h2>
+      <p id="sellerTeamTransferStatus" role="status"></p>
+      <button id="sellerTeamSelectAll" class="btn secondary" type="button">Selecionar todos</button>
+      <div id="sellerTeamTransferList" class="team-transfer-list"></div>
+      <div class="team-transfer-dialog-actions">
+        <button id="cancelSellerTeamTransfer" class="btn secondary" type="button">Cancelar</button>
+        <button id="confirmSellerTeamTransfer" class="btn" type="submit">Confirmar transferência</button>
+      </div>
+    </form>
+  </dialog>
 
   <div
     class="card"
@@ -2692,41 +2724,68 @@ function appendTransferControls(actionCell, seller, payload) {
   } else if (payload.role === "SUPERVISOR" && payload.currentExecutiveUserId) {
     add("Carteira do executivo", "executive:" + payload.currentExecutiveUserId);
   }
-  const moveTeam = document.createElement("input");
-  moveTeam.type = "checkbox"; moveTeam.checked = true;
-  moveTeam.setAttribute("aria-label", "Levar vendedores da equipe junto com o supervisor");
-  const moveTeamLabel = document.createElement("label");
-  moveTeamLabel.className = "move-team-option";
-  if (seller.role === "SUPERVISOR") {
-    moveTeamLabel.title = "Levar os vendedores da equipe junto com o supervisor";
-    moveTeamLabel.setAttribute("aria-label", "Levar vendedores da equipe junto com o supervisor");
-    const teamSymbol = document.createElement("span"); teamSymbol.className = "move-team-symbol"; teamSymbol.setAttribute("aria-hidden", "true");
-    teamSymbol.innerHTML = '<svg viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="10" cy="7" r="4"/><path d="M20 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>';
-    moveTeamLabel.append(moveTeam, teamSymbol);
-  }
   const transfer = document.createElement("button"); transfer.type = "button"; transfer.className = "btn secondary icon-button transfer-icon";
   transfer.textContent = "⇄"; transfer.setAttribute("aria-label", "Transferir " + seller.name); transfer.title = "Transferir";
-  transfer.addEventListener("click", () => submitSellerTransfer(seller, select, moveTeam));
+  transfer.addEventListener("click", () => seller.role === "SUPERVISOR"
+    ? openSupervisorTransferDialog(seller, select)
+    : submitSellerTransfer(seller, select));
   group.append(transfer, select);
   actionCell.append(group);
-  if (seller.role === "SUPERVISOR") actionCell.append(moveTeamLabel);
 }
 
-async function submitSellerTransfer(seller, select, moveTeam) {
+let pendingSupervisorTransfer = null;
+
+function openSupervisorTransferDialog(supervisor, select) {
+  const dialog = $("sellerTeamTransferDialog");
+  const list = $("sellerTeamTransferList");
+  const status = $("sellerTeamTransferStatus");
+  const sellers = (sellerTeamData?.sellers || []).filter(item =>
+    item.supervisor_user_id === supervisor.seller_user_id && item.role === "VENDEDOR");
+  pendingSupervisorTransfer = { supervisor, select, sellers };
+  list.replaceChildren();
+  status.textContent = sellers.length
+    ? "Marque quem deve acompanhar o supervisor. Sem seleção, somente o supervisor muda de executivo."
+    : "Este supervisor não tem vendedores vinculados no momento.";
+  sellers.forEach(seller => {
+    const label = document.createElement("label"); label.className = "team-transfer-choice";
+    const checkbox = document.createElement("input"); checkbox.type = "checkbox"; checkbox.value = seller.id;
+    const name = document.createElement("span"); name.textContent = seller.name + (seller.active ? "" : " (desligado)");
+    const region = document.createElement("small"); region.textContent = seller.region || "—";
+    label.append(checkbox, name, region); list.append(label);
+  });
+  $("sellerTeamSelectAll").disabled = sellers.length === 0;
+  dialog.showModal();
+}
+
+$("sellerTeamSelectAll").addEventListener("click", () => {
+  const checkboxes = [...$("sellerTeamTransferList").querySelectorAll('input[type="checkbox"]')];
+  const shouldSelectAll = checkboxes.some(item => !item.checked);
+  checkboxes.forEach(item => { item.checked = shouldSelectAll; });
+  $("sellerTeamSelectAll").textContent = shouldSelectAll ? "Desmarcar todos" : "Selecionar todos";
+});
+$("cancelSellerTeamTransfer").addEventListener("click", () => $("sellerTeamTransferDialog").close());
+$("sellerTeamTransferForm").addEventListener("submit", event => {
+  event.preventDefault();
+  if (!pendingSupervisorTransfer) return;
+  const selectedSellerIds = [...$("sellerTeamTransferList").querySelectorAll('input[type="checkbox"]:checked')].map(item => item.value);
+  submitSellerTransfer(pendingSupervisorTransfer.supervisor, pendingSupervisorTransfer.select, selectedSellerIds, true);
+});
+
+async function submitSellerTransfer(seller, select, selectedSellerIds = [], supervisorDialog = false) {
   const selected = select.value;
   if (!selected) {
     $("sellerManagementStatus").textContent = "Selecione o destino da transferência.";
     return;
   }
-  let transfer = { executiveUserId: null, supervisorUserId: null, moveTeam: moveTeam.checked };
+  let transfer = { executiveUserId: null, supervisorUserId: null, moveSellerIds: selectedSellerIds };
   if (selected.startsWith("executive:")) transfer.executiveUserId = selected.slice("executive:".length) || null;
   else if (selected.startsWith("supervisor:")) transfer.supervisorUserId = selected.slice("supervisor:".length);
   else if (selected !== "manager") return;
 
   const message = seller.role === "SUPERVISOR"
-    ? moveTeam.checked
-      ? "O supervisor e seus vendedores serão transferidos para o executivo escolhido. Os leads continuarão nas carteiras dos mesmos vendedores. Continuar?"
-      : "O supervisor será transferido sem levar os vendedores. Eles permanecerão com o executivo atual e deixarão de pertencer a este supervisor. Continuar?"
+    ? selectedSellerIds.length
+      ? "O supervisor e " + selectedSellerIds.length + " vendedor(es) selecionado(s) serão associados ao executivo escolhido. Os demais vendedores permanecem nos vínculos atuais, e os leads continuam nas carteiras dos mesmos vendedores. Continuar?"
+      : "Somente o supervisor será associado ao executivo escolhido. Os vendedores permanecem nos vínculos atuais. Continuar?"
     : "A transferência muda quais supervisores e executivos podem acessar os leads de " + seller.name + ". Os leads permanecem na carteira do vendedor. Continuar?";
   if (!window.confirm(message)) return;
 
@@ -2738,9 +2797,11 @@ async function submitSellerTransfer(seller, select, moveTeam) {
       method: "PATCH", headers, body: JSON.stringify({ transfer })
     });
     const result = await response.json(); if (!response.ok) throw new Error(result.error || "Não foi possível transferir.");
-    status.textContent = seller.role === "SUPERVISOR" && !transfer.moveTeam
-      ? "Supervisor transferido. Os vendedores permaneceram com o executivo anterior."
+    status.textContent = seller.role === "SUPERVISOR"
+      ? "Supervisor transferido; " + selectedSellerIds.length + " vendedor(es) acompanharam a mudança. Os leads permanecem nas carteiras dos mesmos vendedores."
       : "Transferência concluída. Os leads continuam nas carteiras dos mesmos vendedores.";
+    if (supervisorDialog) $("sellerTeamTransferDialog").close();
+    pendingSupervisorTransfer = null;
     await loadLeads();
     await loadSellerManagement();
     if (isManager) await loadManagerQrSellers();
