@@ -12,6 +12,11 @@ const preview = {
 
 test("preview seller onboarding sends a staging invitation and the matching QR attachment", async t => {
   const id = "70000000-0000-4000-8000-000000000001";
+  const executiveId = "70000000-0000-4000-8000-000000000002";
+  const executiveProfile = {
+    id: "80000000-0000-4000-8000-000000000001", seller_user_id: executiveId,
+    name: "Executivo teste", active: true, executive_user_id: null, supervisor_user_id: null
+  };
   const qr = "iVBORw0KGgo=";
   const invite = "https://staging.supabase.co/auth/v1/verify?type=invite";
   let email;
@@ -29,8 +34,11 @@ test("preview seller onboarding sends a staging invitation and the matching QR a
       return Response.json({ id, action_link: invite });
     }
     if (url.pathname === "/rest/v1/user_roles" && !init.method) {
-      return Response.json([{ role: "GERENTE" }]);
+      return Response.json(url.searchParams.has("user_id")
+        ? [{ user_id: executiveId, role: "EXECUTIVO" }]
+        : [{ role: "GERENTE" }]);
     }
+    if (url.pathname === "/rest/v1/sellers" && !init.method) return Response.json([executiveProfile]);
     return Response.json([]);
   });
   const response = await worker.fetch(new Request("https://wallet-staging.example.test/api/sellers", {
@@ -38,7 +46,8 @@ test("preview seller onboarding sends a staging invitation and the matching QR a
     headers: { authorization: "Bearer test-token" },
     body: JSON.stringify({
       sellerId: id, name: "Vendedor Teste", email: "seller@example.test",
-      phone: "11900000000", region: "Teste", qrPng: "data:image/png;base64," + qr
+      phone: "11900000000", region: "Teste", executiveUserId: executiveId,
+      qrPng: "data:image/png;base64," + qr
     })
   }), {
     ...preview, SUPABASE_SERVICE_ROLE_KEY: "test-secret",
@@ -81,12 +90,25 @@ test("wallet preview embeds only its configured public Supabase credentials", as
   assert.match(html, /<input id="sellerPhone" type="tel" class="seller-phone-field" placeholder="WhatsApp" aria-label="WhatsApp" required>/);
   assert.doesNotMatch(html, /<th>Envios<\/th>/);
   assert.match(html, /\.whatsapp-icon\{background:#31bd68!important;color:#fff!important/);
-  assert.match(html, /moveTeam\.setAttribute\("aria-label", "Levar vendedores da equipe junto com o supervisor"\)/);
-  assert.doesNotMatch(html, /createTextNode\("Levar equipe junto"\)/);
+  assert.match(html, /<dialog id="sellerTeamTransferDialog" aria-labelledby="sellerTeamTransferTitle">/);
+  assert.match(html, /id="sellerTeamTransferTitle">Transferir supervisor e vendedores</);
+  assert.match(html, /id="sellerTeamSelectAll"/);
+  assert.match(html, /id="sellerTeamTransferList"/);
+  assert.doesNotMatch(html, /Levar equipe junto/);
   assert.match(html, /group\.append\(transfer, select\)/);
-  assert.match(html, /\.lead-toolbar\{display:grid;grid-template-columns:minmax\(0,3fr\) minmax\(0,1\.5fr\)/);
+  assert.match(html, /\.lead-toolbar\{display:grid;grid-template-columns:minmax\(0,3fr\) minmax\(0,2fr\) minmax\(0,1\.5fr\)/);
+  assert.match(html, /id="periodStart" type="date"/);
+  assert.match(html, /id="periodEnd" type="date"/);
+  assert.match(html, /id="clearPeriodBtn"/);
+  assert.match(html, /id="invitationSummary"/);
+  assert.match(html, /\["sent", "pending", "failed"\]\.includes\(seller\.onboarding\.email_status\)/);
+  assert.match(html, /retry\.setAttribute\("aria-label", "Reenviar convite por e-mail para " \+ seller\.name\)/);
+  assert.match(html, /Último e-mail: /);
+  assert.match(html, /Aguardando primeiro acesso/);
+  assert.match(html, /\.map\(lead => \{/);
+  assert.match(html, /downloadXlsx\(rows, "Clientes", "carteira-clientes\.xlsx"\)/);
   assert.match(html, /move-team-symbol/);
-  assert.match(html, /actionCell\.append\(group\);\s*if \(seller\.role === "SUPERVISOR"\) actionCell\.append\(moveTeamLabel\);/);
+  assert.match(html, /appendTransferControls\(actionCell, seller, payload\)/);
   assert.match(html, /aria-label", "Transferir " \+ seller\.name/);
   assert.match(html, /aria-label", "Abrir WhatsApp para " \+ seller\.name/);
   assert.doesNotMatch(html, /min-width:\s*900px/);
@@ -128,7 +150,7 @@ test("seller API validates the session on the configured preview Supabase", asyn
 });
 
 async function wallet({ manager = true, privateFieldsError = null, saveError = null, status = "NOVO",
-  callbackHash = "", session = null, passwordReady = true, loadWallet = true } = {}) {
+  callbackHash = "", session = null, passwordReady = true, loadWallet = true, leadRows = null } = {}) {
   const html = await (await worker.fetch(new Request("https://example.test/carteira"), {})).text();
   const script = html.match(/<script>([\s\S]*?)<\/script>/)[1];
   const elements = new Map();
@@ -150,7 +172,8 @@ async function wallet({ manager = true, privateFieldsError = null, saveError = n
     }
     return elements.get(id);
   };
-  const lead = { id: "lead-1", name: "Lead de teste", status };
+  const lead = { id: "lead-1", name: "Lead de teste", status, created_at: "2026-11-18T12:00:00.000Z" };
+  const walletLeads = leadRows || [lead];
   const calls = [];
   const leadUpdates = [];
   const client = {
@@ -161,7 +184,10 @@ async function wallet({ manager = true, privateFieldsError = null, saveError = n
     },
     from(table) {
       return {
-        select: () => ({ order: async () => ({ data: [lead] }) }),
+        select: () => ({
+          order() { return this; },
+          range: async () => ({ data: walletLeads })
+        }),
         update(values) {
           return { eq(column, value) {
             leadUpdates.push([table, values, column, value]);
@@ -176,7 +202,7 @@ async function wallet({ manager = true, privateFieldsError = null, saveError = n
       if (name === "manager_lead_private_fields") {
         return {
           error: privateFieldsError,
-          data: [{ lead_id: lead.id, observation: null, crm_external_id: "CRM-123" }]
+          data: walletLeads.map(item => ({ lead_id: item.id, observation: null, crm_external_id: "CRM-123" }))
         };
       }
       assert.equal(name, "manager_update_lead_observation");
@@ -278,6 +304,7 @@ test("CSV batch creates hierarchy in order and sends only after confirmation", a
   context.loadManagerQrSellers = async () => {};
   context.fetch = async (_path, options) => {
     const body = JSON.parse(options.body);
+    if (_path === "/api/sellers/preflight") return { ok: true, async json() { return { ok: true, conflicts: [] }; } };
     requests.push(body);
     pendingSeller = body;
     return { ok: true, async json() { return { created: true, active: true, emailStatus: "sent" }; } };
@@ -291,7 +318,7 @@ test("CSV batch creates hierarchy in order and sends only after confirmation", a
     })})`, context);
     pendingSeller = null;
   };
-  vm.runInContext(`sellerCsvRows = validateSellerCsvRows(parseSellerCsv(${JSON.stringify(csv)}))`, context);
+  vm.runInContext(`sellerCsvRows = validateSellerCsvRows(parseSellerCsv(${JSON.stringify(csv)})); sellerCsvPreflightReady = true`, context);
   await vm.runInContext("createSellerCsvBatch()", context);
   assert.deepEqual(requests.map(request => request.memberRole), ["EXECUTIVO", "SUPERVISOR", "VENDEDOR"]);
   assert.equal(requests[1].executiveUserId, "user-coord@example.test");
@@ -382,6 +409,22 @@ test("seller can change a lead status and the wallet recalculates totals", async
     assert.equal(walletState.element("vendas").textContent, 1);
     assert.match(walletState.element("rows").innerHTML, new RegExp('<option value="' + status + '" selected>'));
   }
+});
+
+test("selected period filters the lead table and dashboard totals", async () => {
+  const leadRows = [
+    { id: "before", name: "Lead anterior", status: "NOVO", created_at: "2026-11-17T12:00:00.000Z" },
+    { id: "inside", name: "Lead no período", status: "CONECTADO", created_at: "2026-11-18T12:00:00.000Z" },
+    { id: "after", name: "Lead posterior", status: "PROPOSTA", created_at: "2026-11-19T12:00:00.000Z" }
+  ];
+  const walletState = await wallet({ manager: false, leadRows });
+  walletState.element("periodStart").value = "2026-11-18";
+  walletState.element("periodEnd").value = "2026-11-18";
+  vm.runInContext("render()", walletState.context);
+  assert.match(walletState.element("rows").innerHTML, /Lead no período/);
+  assert.doesNotMatch(walletState.element("rows").innerHTML, /Lead anterior|Lead posterior/);
+  assert.equal(walletState.element("total").textContent, 1);
+  assert.equal(walletState.element("vendas").textContent, 1);
 });
 
 test("legacy NOVO and VENDA statuses remain visible but cannot be selected", async () => {

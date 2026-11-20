@@ -124,6 +124,24 @@ function phoneDigits(value) {
   return digits;
 }
 
+function isBlockedNewAccountEmail(email) {
+  return /@(?:claro|brasil|brasilcenter)\./i.test(String(email || "").trim());
+}
+
+function normalizedSellerName(value) {
+  return String(value || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase().trim().replace(/\s+/g, " ");
+}
+
+function hasSellerIdentityDuplicate(target, rows) {
+  const name = normalizedSellerName(target?.name);
+  const phone = phoneDigits(target?.phone);
+  return rows.some(row => row.id !== target?.id && (
+    (name && normalizedSellerName(row.name) === name)
+    || (phone.length >= 10 && phoneDigits(row.phone) === phone)
+  ));
+}
+
 function slugify(value) {
   return String(value || "")
     .normalize("NFKD").replace(/[\u0300-\u036f]/g, "")
@@ -227,9 +245,9 @@ async function getTeamRows(env, leader) {
     if (!links.ok || !Array.isArray(links.data)) return null;
     const supervisorIds = [...new Set(links.data.map(item => item.supervisor_user_id).filter(id => SELLER_ID_RE.test(id || "")))];
     if (supervisorIds.length) {
-      // A supervisor association grants visibility of the supervisor profile,
-      // but sellers must be explicitly assigned to this executive.
-      params.set("or", "(executive_user_id.eq." + leader.user.id + ",seller_user_id.in.(" + supervisorIds.join(",") + "))");
+      // An explicit supervisor association grants this executive access to the
+      // supervisor profile and the sellers assigned to that supervisor.
+      params.set("or", "(executive_user_id.eq." + leader.user.id + ",seller_user_id.in.(" + supervisorIds.join(",") + "),supervisor_user_id.in.(" + supervisorIds.join(",") + "))");
     } else params.set("executive_user_id", "eq." + leader.user.id);
   }
   if (leader.role === "SUPERVISOR") params.set("supervisor_user_id", "eq." + leader.user.id);
@@ -277,7 +295,7 @@ async function getAdminUserLabel(env, userId) {
   return result.data?.user_metadata?.name || "Usuário " + userId.slice(0, 8);
 }
 
-async function getAdminUserEmails(env, userIds) {
+async function getAdminUserAccounts(env, userIds) {
   const wanted = new Set(userIds.filter(id => SELLER_ID_RE.test(id || "")));
   if (!wanted.size) return new Map();
   const result = await serviceRequest(env, "/auth/v1/admin/users?page=1&per_page=1000");
@@ -287,7 +305,10 @@ async function getAdminUserEmails(env, userIds) {
     : Array.isArray(result.data) ? result.data : [];
   return new Map(users
     .filter(user => wanted.has(user.id))
-    .map(user => [user.id, String(user.email || "")]));
+    .map(user => [user.id, {
+      email: String(user.email || ""),
+      confirmed: !!user.confirmed_at
+    }]));
 }
 
 async function getSellerRoles(env, userIds) {
@@ -302,7 +323,7 @@ async function getOnboardingMap(env, sellers) {
   if (!sellers.length) return new Map();
   const ids = sellers.map(seller => seller.id).filter(id => SELLER_ID_RE.test(id || ""));
   if (!ids.length) return new Map();
-  const response = await serviceRequest(env, "/rest/v1/seller_onboarding?seller_id=in.(" + ids.join(",") + ")&select=seller_id,email_status,whatsapp_status,email_error,whatsapp_error,attempt_count");
+  const response = await serviceRequest(env, "/rest/v1/seller_onboarding?seller_id=in.(" + ids.join(",") + ")&select=seller_id,email_status,whatsapp_status,email_error,whatsapp_error,attempt_count,updated_at");
   if (!response.ok) return new Map();
   return new Map((response.data || []).map(item => [item.seller_id, item]));
 }
@@ -424,14 +445,99 @@ async function leaderSellersApi(request, env, url) {
   if (leader.error) return leader.error;
   const readiness = communicationReadiness(env);
   const onboardingRoute = url.pathname.match(/^\/api\/sellers\/([0-9a-f-]+)\/retry$/i);
+  const linkRoute = url.pathname.match(/^\/api\/sellers\/([0-9a-f-]+)\/link$/i);
+  const emailRoute = url.pathname.match(/^\/api\/sellers\/([0-9a-f-]+)\/email$/i);
   const sellerRoute = url.pathname.match(/^\/api\/sellers\/([0-9a-f-]+)$/i);
+
+  if (request.method === "POST" && url.pathname === "/api/sellers/preflight") {
+    let body;
+    try {
+      const raw = await request.text();
+      if (raw.length > 180000) return jsonResponse({ error: "A lista excede o limite para conferência." }, 413);
+      body = JSON.parse(raw);
+    } catch { return jsonResponse({ error: "Lista inválida para conferência." }, 400); }
+    if (!Array.isArray(body?.rows) || !body.rows.length || body.rows.length > 250) {
+      return jsonResponse({ error: "Envie de 1 a 250 linhas para conferir." }, 400);
+    }
+    const rows = body.rows.map(row => ({
+      line: Number(row?.line), name: String(row?.name || "").trim(),
+      email: String(row?.email || "").trim().toLowerCase(), phone: phoneDigits(row?.phone)
+    }));
+    if (rows.some(row => !Number.isInteger(row.line) || row.line < 2 || row.name.length < 2 || row.name.length > 120
+      || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(row.email) || row.email.length > 254
+      || ![10, 11].includes(row.phone.length))) {
+      return jsonResponse({ error: "Confira nome, e-mail e WhatsApp das linhas do arquivo." }, 400);
+    }
+    const [directory, allUsers] = await Promise.all([
+      serviceRequest(env, "/rest/v1/sellers?select=id,name,phone&limit=1000"),
+      serviceRequest(env, "/auth/v1/admin/users?page=1&per_page=1000")
+    ]);
+    if (!directory.ok || !Array.isArray(directory.data) || !allUsers.ok) {
+      return jsonResponse({ error: "Não foi possível conferir a lista contra toda a base." }, 503);
+    }
+    const users = Array.isArray(allUsers.data?.users) ? allUsers.data.users
+      : Array.isArray(allUsers.data) ? allUsers.data : [];
+    const nameCounts = new Map(), phoneCounts = new Map(), emailCounts = new Map();
+    for (const row of rows) {
+      const name = normalizedSellerName(row.name);
+      nameCounts.set(name, (nameCounts.get(name) || 0) + 1);
+      phoneCounts.set(row.phone, (phoneCounts.get(row.phone) || 0) + 1);
+      emailCounts.set(row.email, (emailCounts.get(row.email) || 0) + 1);
+    }
+    const conflicts = rows.flatMap(row => {
+      const reasons = [];
+      if (isBlockedNewAccountEmail(row.email)) reasons.push("Domínio não permitido para novos acessos");
+      if (hasSellerIdentityDuplicate({ id: null, name: row.name, phone: row.phone }, directory.data)) {
+        reasons.push("Nome ou WhatsApp já cadastrado na base");
+      }
+      if (users.some(user => String(user.email || "").toLowerCase() === row.email)) reasons.push("E-mail já associado a uma conta");
+      if ((nameCounts.get(normalizedSellerName(row.name)) || 0) > 1) reasons.push("Nome repetido no arquivo");
+      if ((phoneCounts.get(row.phone) || 0) > 1) reasons.push("WhatsApp repetido no arquivo");
+      if ((emailCounts.get(row.email) || 0) > 1) reasons.push("E-mail repetido no arquivo");
+      return reasons.length ? [{ line: row.line, reasons }] : [];
+    });
+    return jsonResponse({ ok: true, conflicts });
+  }
+
+  if (request.method === "PATCH" && emailRoute) {
+    if (leader.role !== "GERENTE") return jsonResponse({ error: "Somente o gerente pode alterar o e-mail de acesso." }, 403);
+    let body;
+    try { body = await request.json(); } catch { return jsonResponse({ error: "Dados do e-mail inválidos." }, 400); }
+    const id = emailRoute[1];
+    const expectedEmail = String(body.expectedEmail || "").trim().toLowerCase();
+    const email = String(body.email || "").trim().toLowerCase();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(expectedEmail) || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 254 || email === expectedEmail) {
+      return jsonResponse({ error: "Confira o e-mail atual e o novo e-mail." }, 400);
+    }
+    const target = await serviceRequest(env, "/rest/v1/sellers?id=eq." + id + "&select=id,name,phone,seller_user_id");
+    const seller = target.data?.[0];
+    if (!target.ok || !seller?.seller_user_id) return jsonResponse({ error: "Não foi possível localizar uma conta vinculada a este cadastro." }, target.ok ? 404 : 503);
+    const userResult = await serviceRequest(env, "/auth/v1/admin/users/" + seller.seller_user_id);
+    const authUser = userResult.data?.user || userResult.data;
+    if (!userResult.ok || String(authUser?.email || "").toLowerCase() !== expectedEmail) {
+      return jsonResponse({ error: "O e-mail atual da conta mudou ou não pôde ser confirmado. Atualize a carteira e tente novamente." }, userResult.ok ? 409 : 503);
+    }
+    const usersResult = await serviceRequest(env, "/auth/v1/admin/users?page=1&per_page=1000");
+    const users = Array.isArray(usersResult.data?.users) ? usersResult.data.users : Array.isArray(usersResult.data) ? usersResult.data : [];
+    if (!usersResult.ok) return jsonResponse({ error: "Não foi possível verificar se o novo e-mail já está em uso." }, 503);
+    if (users.some(user => user.id !== seller.seller_user_id && String(user.email || "").toLowerCase() === email)) {
+      return jsonResponse({ error: "Este e-mail já está associado a outra conta." }, 409);
+    }
+    const updated = await serviceRequest(env, "/auth/v1/admin/users/" + seller.seller_user_id, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ email })
+    });
+    if (!updated.ok) return jsonResponse({ error: "O Supabase não conseguiu atualizar o e-mail desta conta." }, updated.status >= 400 && updated.status < 500 ? 409 : 503);
+    return jsonResponse({ ok: true, sellerId: seller.id, userId: seller.seller_user_id, email, emailConfirmed: !!(updated.data?.user || updated.data)?.email_confirmed_at });
+  }
 
   if (request.method === "GET" && url.pathname === "/api/sellers") {
     const sellers = await getTeamRows(env, leader);
     if (!sellers) return jsonResponse({ error: "Não foi possível carregar sua equipe." }, 503);
     const onboarding = await getOnboardingMap(env, sellers);
-    const emails = await getAdminUserEmails(env, sellers.map(item => item.seller_user_id));
-    if (!emails) return jsonResponse({ error: "Não foi possível carregar os contatos da equipe." }, 503);
+    const accounts = await getAdminUserAccounts(env, sellers.map(item => item.seller_user_id));
+    if (!accounts) return jsonResponse({ error: "Não foi possível carregar os contatos da equipe." }, 503);
     const leaderProfile = leader.role === "SUPERVISOR" ? await getLeaderProfile(env, leader.user.id) : null;
     const supervisorLinks = await getSupervisorExecutiveLinks(env,
       leader.role === "GERENTE" ? "" : leader.role === "EXECUTIVO"
@@ -479,12 +585,24 @@ async function leaderSellersApi(request, env, url) {
       }, new Map())),
       assignableExecutives: executiveLabels.filter(([, label]) => label).map(([id, label]) => ({ id, label })),
       assignableSupervisors: supervisorLabels.filter(([, label]) => label).map(([id, label]) => ({ id, label })),
-      sellers: sellers.map(seller => ({
-        ...seller,
-        email: emails.get(seller.seller_user_id) || "",
-        role: seller.seller_user_id ? roleMap[seller.seller_user_id] || "SEM PERFIL" : "VENDEDOR",
-        onboarding: onboarding.get(seller.id) || null
-      }))
+      sellers: sellers.map(seller => {
+        const account = accounts.get(seller.seller_user_id);
+        const delivery = onboarding.get(seller.id) || null;
+        const invitationStatus = account?.confirmed ? "Aceito"
+          : !delivery ? "Sem convite"
+            : delivery.email_status === "failed" ? "Falha no envio"
+            : delivery.email_status === "pending" ? "Pendente de envio"
+              : delivery.email_status === "sent" ? "Aguardando primeiro acesso" : "Sem convite";
+        return {
+          ...seller,
+          email: account?.email || "",
+          role: seller.seller_user_id ? roleMap[seller.seller_user_id] || "SEM PERFIL" : "VENDEDOR",
+          onboarding: delivery,
+          invitationStatus,
+          accountConfirmed: !!account?.confirmed,
+          linkEligible: leader.role === "GERENTE" && !seller.seller_user_id && !hasSellerIdentityDuplicate(seller, sellers)
+        };
+      })
     });
   }
 
@@ -510,6 +628,16 @@ async function leaderSellersApi(request, env, url) {
       || ![10, 11].includes(digits.length) || region.length < 2 || region.length > 80 || !qrPng
       || !["VENDEDOR", "SUPERVISOR", "EXECUTIVO"].includes(memberRole)) {
       return jsonResponse({ error: "Confira nome, e-mail, telefone e região do vendedor." }, 400);
+    }
+    if (isBlockedNewAccountEmail(email)) {
+      return jsonResponse({ error: "Não é permitido criar novos acessos com e-mails @claro, @brasil ou @brasilcenter." }, 400);
+    }
+    const directory = await serviceRequest(env, "/rest/v1/sellers?select=id,name,phone&limit=1000");
+    if (!directory.ok || !Array.isArray(directory.data)) {
+      return jsonResponse({ error: "Não foi possível conferir a base para evitar cadastros duplicados." }, 503);
+    }
+    if (hasSellerIdentityDuplicate({ id: null, name, phone: digits }, directory.data)) {
+      return jsonResponse({ error: "Já existe um cadastro com este nome ou WhatsApp. Revise a base antes de criar outra conta." }, 409);
     }
     if ((memberRole === "EXECUTIVO" && leader.role !== "GERENTE")
       || (memberRole === "SUPERVISOR" && leader.role === "SUPERVISOR")) {
@@ -609,7 +737,10 @@ async function leaderSellersApi(request, env, url) {
     });
     if (!sellerInsert.ok) {
       await serviceRequest(env, "/auth/v1/admin/users/" + userId, { method: "DELETE" });
-      return jsonResponse({ error: sellerInsert.status === 409 ? "Já existe um vendedor com esse identificador." : "Não foi possível salvar o vendedor." }, 409);
+      return jsonResponse({ error: sellerInsert.status === 409
+        ? "Já existe um cadastro com esse identificador; a conta do convite foi cancelada."
+        : "O perfil não pôde ser salvo na base; a conta do convite foi cancelada. Tente novamente e, se persistir, informe este erro ao suporte." },
+      sellerInsert.status === 409 ? 409 : 503);
     }
 
     const roleInsert = await serviceRequest(env, "/rest/v1/user_roles", {
@@ -621,18 +752,117 @@ async function leaderSellersApi(request, env, url) {
       : roleInsert.ok && memberRole === "VENDEDOR" && supervisorUserId && executiveUserId
         ? await linkSupervisorToExecutive(env, supervisorUserId, executiveUserId)
         : roleInsert.ok;
-    const onboardingInsert = hierarchyInsert ? await serviceRequest(env, "/rest/v1/seller_onboarding", {
-      method: "POST", headers: { "content-type": "application/json", Prefer: "return=minimal" },
-      body: JSON.stringify({ seller_id: id, email_status: "pending", whatsapp_status: "pending", attempt_count: 0 })
-    }) : { ok: false };
-    if (!roleInsert.ok || !onboardingInsert.ok) {
+    const rollbackIncompleteCreate = async () => {
       await serviceRequest(env, "/rest/v1/sellers?id=eq." + id, { method: "DELETE" });
       await serviceRequest(env, "/auth/v1/admin/users/" + userId, { method: "DELETE" });
-      return jsonResponse({ error: "Não foi possível concluir o cadastro. Nenhum vendedor foi ativado." }, 503);
+    };
+    if (!roleInsert.ok || !hierarchyInsert) {
+      await rollbackIncompleteCreate();
+      return jsonResponse({ error: !roleInsert.ok
+        ? "O cadastro foi cancelado porque não foi possível gravar o perfil de acesso. Nenhuma conta parcial foi mantida."
+        : "O cadastro foi cancelado porque não foi possível confirmar o vínculo hierárquico. Nenhuma conta parcial foi mantida." }, 503);
+    }
+    const onboardingInsert = await serviceRequest(env, "/rest/v1/seller_onboarding", {
+      method: "POST", headers: { "content-type": "application/json", Prefer: "return=minimal" },
+      body: JSON.stringify({ seller_id: id, email_status: "pending", whatsapp_status: "pending", attempt_count: 0 })
+    });
+    if (!onboardingInsert.ok) {
+      await rollbackIncompleteCreate();
+      return jsonResponse({ error: "O cadastro foi cancelado porque não foi possível preparar o convite. Nenhuma conta parcial foi mantida." }, 503);
     }
 
     return await deliverSellerOnboarding(env, {
       id, slug: sellerSlug, name, email, phone: digits, userId, inviteUrl, qrPng, retry: false
+    });
+  }
+
+  if (request.method === "POST" && linkRoute) {
+    if (leader.role !== "GERENTE") return jsonResponse({ error: "Somente o gerente pode vincular acessos antigos." }, 403);
+    if (!readiness.ready) return jsonResponse({ error: "O envio automático de e-mail ainda não está configurado.", readiness }, 503);
+    const id = linkRoute[1];
+    let body;
+    try { body = await request.json(); } catch { return jsonResponse({ error: "Informe um e-mail válido." }, 400); }
+    const email = String(body.email || "").trim().toLowerCase();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 254) {
+      return jsonResponse({ error: "Informe um e-mail válido." }, 400);
+    }
+    if (isBlockedNewAccountEmail(email)) {
+      return jsonResponse({ error: "Este domínio não pode ser usado para novos acessos." }, 400);
+    }
+    const qrPng = qrBase64(body.qrPng);
+    if (!qrPng) return jsonResponse({ error: "Não foi possível preparar o QR Code para o convite." }, 400);
+    const lookup = await serviceRequest(env, "/rest/v1/sellers?id=eq." + id + "&select=id,slug,name,phone,region,active,seller_user_id,supervisor_user_id,executive_user_id");
+    const target = lookup.data?.[0];
+    if (!lookup.ok || !target) return jsonResponse({ error: "Integrante não encontrado." }, lookup.ok ? 404 : 503);
+    if (target.seller_user_id) return jsonResponse({ error: "Este integrante já possui uma conta vinculada." }, 409);
+    const directory = await serviceRequest(env, "/rest/v1/sellers?select=id,name,phone&limit=1000");
+    if (!directory.ok || !Array.isArray(directory.data)) return jsonResponse({ error: "Não foi possível confirmar se já existe outro cadastro da pessoa." }, 503);
+    if (hasSellerIdentityDuplicate(target, directory.data)) {
+      return jsonResponse({ error: "Há outro cadastro com o mesmo nome ou telefone. O vínculo foi bloqueado para evitar duplicidade; revise os dois registros." }, 409);
+    }
+    if (!target.active) return jsonResponse({ error: "Ative o cadastro antes de vincular o acesso." }, 409);
+    const existingOnboarding = await serviceRequest(env, "/rest/v1/seller_onboarding?seller_id=eq." + id + "&select=seller_id");
+    if (!existingOnboarding.ok) return jsonResponse({ error: "Não foi possível verificar convites anteriores." }, 503);
+    if (existingOnboarding.data?.length) return jsonResponse({ error: "Este cadastro já possui histórico de convite; use a opção de reenvio." }, 409);
+    const allUsers = await serviceRequest(env, "/auth/v1/admin/users?page=1&per_page=1000");
+    const authUsers = Array.isArray(allUsers.data?.users) ? allUsers.data.users : Array.isArray(allUsers.data) ? allUsers.data : [];
+    if (!allUsers.ok) return jsonResponse({ error: "Não foi possível confirmar se o e-mail já tem conta." }, 503);
+    if (authUsers.some(item => String(item.email || "").toLowerCase() === email)) {
+      return jsonResponse({ error: "Já existe uma conta com esse e-mail; nenhum convite foi enviado." }, 409);
+    }
+    let executiveUserId = target.executive_user_id || null;
+    if (target.supervisor_user_id) {
+      const supervisor = await getLeaderProfile(env, target.supervisor_user_id);
+      const roles = await getSellerRoles(env, [target.supervisor_user_id]);
+      const links = await getSupervisorExecutiveLinks(env, "&supervisor_user_id=eq." + target.supervisor_user_id);
+      if (!supervisor?.active || roles?.[target.supervisor_user_id] !== "SUPERVISOR" || !links) {
+        return jsonResponse({ error: "Não foi possível validar a hierarquia atual." }, 409);
+      }
+      const candidates = [...new Set(links.map(item => item.executive_user_id))];
+      if (!executiveUserId && candidates.length === 1) executiveUserId = candidates[0];
+      if (executiveUserId && !candidates.includes(executiveUserId)) {
+        return jsonResponse({ error: "A hierarquia atual não confirma um executivo responsável único." }, 409);
+      }
+      if (!executiveUserId) return jsonResponse({ error: "Vincule este supervisor a um executivo antes de liberar o acesso." }, 409);
+      const execProfile = await getLeaderProfile(env, executiveUserId);
+      const execRole = await getSellerRoles(env, [executiveUserId]);
+      if (!execProfile?.active || execRole?.[executiveUserId] !== "EXECUTIVO") {
+        return jsonResponse({ error: "O executivo associado está inativo ou inválido." }, 409);
+      }
+    }
+    const invite = await createSellerAuthLink(env, email, target.name, "VENDEDOR");
+    if (!invite.ok || !SELLER_ID_RE.test(invite.userId || "") || typeof invite.inviteUrl !== "string") {
+      return jsonResponse({ error: "Não foi possível criar o convite de acesso." }, 502);
+    }
+    const linked = await serviceRequest(env, "/rest/v1/sellers?id=eq." + id + "&seller_user_id=is.null", {
+      method: "PATCH", headers: { "content-type": "application/json", Prefer: "return=representation" },
+      body: JSON.stringify({ seller_user_id: invite.userId, executive_user_id: executiveUserId, active: false })
+    });
+    if (!linked.ok || !linked.data?.length) {
+      await serviceRequest(env, "/auth/v1/admin/users/" + invite.userId, { method: "DELETE" });
+      return jsonResponse({ error: "O cadastro mudou durante o vínculo. Nenhum convite foi enviado." }, 409);
+    }
+    const roleInsert = await serviceRequest(env, "/rest/v1/user_roles", {
+      method: "POST", headers: { "content-type": "application/json", Prefer: "return=minimal" },
+      body: JSON.stringify({ user_id: invite.userId, role: "VENDEDOR" })
+    });
+    const onboardingInsert = roleInsert.ok ? await serviceRequest(env, "/rest/v1/seller_onboarding", {
+      method: "POST", headers: { "content-type": "application/json", Prefer: "return=minimal" },
+      body: JSON.stringify({ seller_id: id, email_status: "pending", whatsapp_status: "pending", attempt_count: 0 })
+    }) : { ok: false };
+    if (!roleInsert.ok || !onboardingInsert.ok) {
+      await serviceRequest(env, "/rest/v1/seller_onboarding?seller_id=eq." + id, { method: "DELETE" });
+      await serviceRequest(env, "/rest/v1/user_roles?user_id=eq." + invite.userId, { method: "DELETE" });
+      await serviceRequest(env, "/rest/v1/sellers?id=eq." + id, {
+        method: "PATCH", headers: { "content-type": "application/json", Prefer: "return=minimal" },
+        body: JSON.stringify({ seller_user_id: null, executive_user_id: target.executive_user_id, active: target.active })
+      });
+      await serviceRequest(env, "/auth/v1/admin/users/" + invite.userId, { method: "DELETE" });
+      return jsonResponse({ error: "Não foi possível concluir o vínculo. O convite não foi enviado." }, 503);
+    }
+    return await deliverSellerOnboarding(env, {
+      id, slug: target.slug, name: target.name, email, phone: target.phone, userId: invite.userId,
+      inviteUrl: invite.inviteUrl, qrPng, retry: false
     });
   }
 
@@ -644,7 +874,12 @@ async function leaderSellersApi(request, env, url) {
     if (!target) return jsonResponse({ error: "Vendedor não encontrado." }, 404);
     const targetRoles = await getSellerRoles(env, [target.seller_user_id]);
     if (!targetRoles) return jsonResponse({ error: "Não foi possível confirmar o perfil deste integrante." }, 503);
-    const targetRole = target.seller_user_id ? targetRoles[target.seller_user_id] : "";
+    // A manager can still administer a legacy seller row that has no linked
+    // Auth account yet (for example, deactivate an orphaned roster entry).
+    // Other leadership roles must have a linked account before managing it.
+    const targetRole = target.seller_user_id
+      ? targetRoles[target.seller_user_id]
+      : leader.role === "GERENTE" ? "VENDEDOR" : "";
     if (!targetRole || !["GERENTE", "EXECUTIVO", "SUPERVISOR", "VENDEDOR"].includes(targetRole)) {
       return jsonResponse({ error: "O perfil deste integrante não está configurado corretamente." }, 409);
     }
@@ -674,6 +909,9 @@ async function leaderSellersApi(request, env, url) {
         body: JSON.stringify({ active: body.active })
       });
       if (!update.ok) return jsonResponse({ error: "Não foi possível alterar o acesso do vendedor." }, 503);
+      if (!Array.isArray(update.data) || update.data.length !== 1 || update.data[0]?.active !== body.active) {
+        return jsonResponse({ error: "O estado não foi alterado. Atualize a carteira e tente novamente." }, 409);
+      }
       return jsonResponse({ ok: true, active: body.active, role: targetRole });
     }
 
@@ -684,17 +922,21 @@ async function leaderSellersApi(request, env, url) {
     try { body = JSON.parse(raw); } catch { return jsonResponse({ error: "Imagem QR inválida." }, 400); }
     const qrPng = qrBase64(body.qrPng);
     if (!qrPng) return jsonResponse({ error: "Imagem QR inválida." }, 400);
-    const onboarding = await serviceRequest(env, "/rest/v1/seller_onboarding?seller_id=eq." + id + "&select=email_status,whatsapp_status");
+    const onboarding = await serviceRequest(env, "/rest/v1/seller_onboarding?seller_id=eq." + id + "&select=email_status,whatsapp_status,attempt_count");
     if (!onboarding.data?.length) return jsonResponse({ error: "Não há envios pendentes para esse vendedor." }, 409);
     const authUser = await serviceRequest(env, "/auth/v1/admin/users/" + target.seller_user_id);
-    const email = authUser.data?.email;
-    if (!email) return jsonResponse({ error: "Não foi possível localizar o e-mail de convite." }, 503);
-    const invite = onboarding.data[0].email_status === "sent" ? null : await createSellerAuthLink(env, email, target.name);
+    const authAccount = authUser.data?.user || authUser.data;
+    const email = authAccount?.email;
+    if (!authUser.ok || !email) return jsonResponse({ error: "Não foi possível localizar o e-mail de convite." }, 503);
+    if (authAccount.confirmed_at || authAccount.email_confirmed_at) {
+      return jsonResponse({ error: "Este acesso já foi confirmado; nenhum convite foi reenviado." }, 409);
+    }
+    const invite = await createSellerAuthLink(env, email, target.name, targetRole);
     const inviteUrl = invite?.inviteUrl;
-    if (invite && (!invite.ok || typeof inviteUrl !== "string")) return jsonResponse({ error: "Não foi possível recriar o convite por e-mail." }, 502);
+    if (!invite?.ok || typeof inviteUrl !== "string") return jsonResponse({ error: "Não foi possível recriar o convite por e-mail." }, 502);
     return await deliverSellerOnboarding(env, {
       id, slug: target.slug, name: target.name, email, phone: target.phone, userId: target.seller_user_id, active: target.active,
-      inviteUrl, qrPng, retry: true, onboarding: onboarding.data[0]
+      inviteUrl, qrPng, retry: true, onboarding: { ...onboarding.data[0], email_status: "pending" }
     });
   }
 
@@ -739,8 +981,10 @@ async function deliverSellerOnboarding(env, seller) {
     whatsappUrl: buildWhatsappInviteUrl(seller.phone, seller.name, qrUrl),
     message: nextEmail !== "sent"
       ? "Cadastro salvo, mas o e-mail não foi confirmado. O acesso continua bloqueado; reenvie o e-mail após corrigir o problema."
-      : active
-        ? "Convite e QR enviados por e-mail. O acesso foi liberado. O WhatsApp pode ser enviado manualmente, sem custo da Meta."
+        : active
+        ? seller.retry
+          ? "Convite reenviado e aceito pelo serviço de e-mail. Confira a caixa de entrada e spam."
+          : "Convite e QR enviados por e-mail. O acesso foi liberado. O WhatsApp pode ser enviado manualmente, sem custo da Meta."
         : "E-mail confirmado. O vendedor continua desligado; você pode reativá-lo e enviar a mensagem pronta pelo WhatsApp, sem custo da Meta."
   }, seller.retry ? 200 : 201);
 }
@@ -959,6 +1203,13 @@ body{
   min-width:0
 }
 
+.period-filters{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:8px}
+.period-filters label{display:flex;align-items:center;gap:6px;color:#526071;font-size:12px}
+.period-filters input{height:var(--wallet-control-height);min-height:var(--wallet-control-height);padding:7px 9px;border:1px solid #cfd2d8;border-radius:9px;background:#fff}
+.invitation-summary{display:grid;grid-template-columns:repeat(auto-fit,minmax(145px,1fr));gap:8px;margin:12px 0}
+.invitation-summary .stat{padding:10px 12px;font-size:12px}
+.invitation-summary .stat b{font-size:20px}
+
 .filters input,
 .filters select{
   min-width:0;
@@ -971,7 +1222,7 @@ body{
   background:#fff
 }
 
-.lead-toolbar{display:grid;grid-template-columns:minmax(0,3fr) minmax(0,1.5fr);align-items:center;gap:10px;margin:14px 0;min-width:0;width:100%}
+.lead-toolbar{display:grid;grid-template-columns:minmax(0,3fr) minmax(0,2fr) minmax(0,1.5fr);align-items:center;gap:10px;margin:14px 0;min-width:0;width:100%}
 .lead-toolbar>.filters,.lead-toolbar>.export-actions{min-width:0}
 .lead-toolbar .export-actions{display:flex;justify-content:flex-end;align-items:center;gap:6px;flex-wrap:wrap;min-width:0}
 .lead-toolbar .btn{padding:7px 9px;border-radius:8px;font-size:11px}
@@ -1446,6 +1697,7 @@ th{
     <h2 class="h">Equipe</h2>
     <p class="muted">O convite e o QR Code são enviados automaticamente por e-mail. O botão do WhatsApp abre uma mensagem pronta para envio manual, sem cobrança da Meta.</p>
     <p id="sellerSetupStatus" class="muted" role="status" aria-live="polite"></p>
+    <div id="invitationSummary" class="invitation-summary" aria-label="Resumo dos convites"></div>
     <form id="sellerForm" class="seller-form">
       <select id="sellerRole" aria-label="Perfil da equipe">
         <option value="VENDEDOR">Vendedor</option>
@@ -1458,8 +1710,9 @@ th{
       <input id="sellerRegion" placeholder="Região" value="Santos" required maxlength="80">
       <select id="sellerExecutive" class="hidden"><option value="">Selecione o executivo</option></select>
       <select id="sellerSupervisor" class="hidden"><option value="">Selecione o supervisor</option></select>
-      <button id="sellerCreateBtn" class="btn" type="submit" aria-describedby="sellerSetupStatus" disabled>Cadastrar vendedor</button>
+      <button id="sellerCreateBtn" class="btn" type="submit" aria-describedby="sellerSetupStatus sellerManagementStatus" disabled>Cadastrar vendedor</button>
     </form>
+    <div id="sellerManagementStatus" class="muted" role="status" aria-live="polite"></div>
     <details id="sellerBulkImport" class="seller-bulk-import">
       <summary>Preparar cadastro em escala por CSV</summary>
       <p class="muted">Baixe o modelo, confira os dados e revise a prévia. Os vínculos usam os e-mails dos gestores; executivos, supervisores e vendedores são processados nesta ordem. Só a confirmação cria contas e envia convites por e-mail. WhatsApp continua manual e gratuito. Para manter o custo zero no Resend Free (limite de 100 e-mails/dia), cada lote CSV aceita até 90 novos integrantes. Reenvios e convites manuais também consomem essa cota.</p>
@@ -1471,7 +1724,6 @@ th{
       <button id="sellerCsvCreateBtn" class="btn hidden" type="button" disabled>Cadastrar válidos e enviar convites</button>
       <div id="sellerCsvStatus" class="muted" role="status" aria-live="polite"></div>
     </details>
-    <div id="sellerManagementStatus" class="muted" role="status" aria-live="polite"></div>
     <div class="team-table-wrap">
       <table class="team-table" style="width:100%;border-collapse:collapse">
         <thead><tr><th>Integrante</th><th>Perfil</th><th>Região</th><th>E-mail</th><th>Telefone</th><th>Estado</th><th>Ação</th></tr></thead>
@@ -1489,6 +1741,20 @@ th{
       <div class="team-transfer-dialog-actions">
         <button id="cancelSellerTeamTransfer" class="btn secondary" type="button">Cancelar</button>
         <button id="confirmSellerTeamTransfer" class="btn" type="submit">Confirmar transferência</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="sellerEmailDialog" aria-labelledby="sellerEmailTitle">
+    <form id="sellerEmailForm">
+      <h2 id="sellerEmailTitle">Atualizar e-mail de acesso</h2>
+      <p id="sellerEmailDescription" class="muted"></p>
+      <label for="sellerEmailInput">Novo e-mail</label>
+      <input id="sellerEmailInput" type="email" autocomplete="email" required>
+      <p>O cadastro e os vínculos serão preservados. Será necessário confirmar o novo endereço antes do acesso.</p>
+      <div class="team-transfer-dialog-actions">
+        <button id="cancelSellerEmail" class="btn secondary" type="button">Cancelar</button>
+        <button id="confirmSellerEmail" class="btn" type="submit">Atualizar e-mail</button>
       </div>
     </form>
   </dialog>
@@ -1519,6 +1785,13 @@ th{
         <option value="CONECTADO">CONECTADO</option>
         <option value="NAO_VENDA">NÃO VENDA</option>
       </select>
+    </div>
+
+    <div class="period-filters" aria-label="Filtrar período dos leads">
+      <label>De <input id="periodStart" type="date" aria-label="Data inicial"></label>
+      <label>Até <input id="periodEnd" type="date" aria-label="Data final"></label>
+      <button id="clearPeriodBtn" class="btn secondary" type="button">Limpar período</button>
+      <span id="periodError" class="error" role="status" aria-live="polite"></span>
     </div>
 
     <div class="export-actions">
@@ -1815,11 +2088,34 @@ function visibleLeads() {
   const query = $("search").value.trim().toLowerCase();
   const product = $("product").value;
   const status = $("status").value;
+  const startValue = $("periodStart").value;
+  const endValue = $("periodEnd").value;
+  const start = startValue ? new Date(startValue + "T00:00:00").getTime() : null;
+  const end = endValue ? new Date(endValue + "T23:59:59.999").getTime() : null;
+  const invalidPeriod = start !== null && end !== null && start > end;
+  $("periodError").textContent = invalidPeriod ? "A data inicial deve ser anterior à data final." : "";
+  if (invalidPeriod) return [];
   return leads.filter(lead => {
+    const createdAt = new Date(lead.created_at).getTime();
+    const matchesPeriod = (start === null && end === null || Number.isFinite(createdAt))
+      && (start === null || createdAt >= start) && (end === null || createdAt <= end);
     const matchesSearch = !query || [lead.name, lead.customer_phone, lead.address]
       .some(value => String(value ?? "").toLowerCase().includes(query));
-    return matchesSearch && (!product || lead.product_searched === product)
+    return matchesPeriod && matchesSearch && (!product || lead.product_searched === product)
       && (!status || lead.status === status);
+  });
+}
+
+function leadsInSelectedPeriod() {
+  const startValue = $("periodStart").value;
+  const endValue = $("periodEnd").value;
+  const start = startValue ? new Date(startValue + "T00:00:00").getTime() : null;
+  const end = endValue ? new Date(endValue + "T23:59:59.999").getTime() : null;
+  if (start !== null && end !== null && start > end) return [];
+  return leads.filter(lead => {
+    const createdAt = new Date(lead.created_at).getTime();
+    return (start === null && end === null || Number.isFinite(createdAt)) && (start === null || createdAt >= start)
+      && (end === null || createdAt <= end);
   });
 }
 
@@ -1920,20 +2216,25 @@ function downloadXlsx(rows, sheetName, filename) {
 async function loadLeads() {
   let data;
   let error;
-  try {
-    ({ data, error } = await client
-      .from("leads")
-      .select(
-        "id,name,customer_phone,address,has_claro,product_searched,status,created_at,seller_id,next_step,next_contact_at,last_interaction_at,last_interaction_type"
-      )
-      .order(
-        "created_at",
-        {
-          ascending:false
-        }
-      ));
-  } catch (requestError) {
-    error = requestError;
+  const pageSize = 500;
+  const allRows = [];
+  for (let offset = 0; ; offset += pageSize) {
+    try {
+      ({ data, error } = await client
+        .from("leads")
+        .select(
+          "id,name,customer_phone,address,has_claro,product_searched,status,created_at,seller_id,next_step,next_contact_at,last_interaction_at,last_interaction_type"
+        )
+        .order("created_at", { ascending: false })
+        .order("id", { ascending: true })
+        .range(offset, offset + pageSize - 1));
+    } catch (requestError) {
+      error = requestError;
+    }
+    if (error) break;
+    const page = data || [];
+    allRows.push(...page);
+    if (page.length < pageSize) break;
   }
 
   if (error) {
@@ -1943,19 +2244,25 @@ async function loadLeads() {
     return;
   }
 
-  leads = data || [];
+  leads = allRows;
 
   $("managerMessage").textContent = "";
   if (isManager && leads.length) {
     let privateFields;
     let privateFieldsError;
-    try {
-      ({ data: privateFields, error: privateFieldsError } = await client.rpc(
-        "manager_lead_private_fields",
-        { p_lead_ids: leads.map(lead => lead.id) }
-      ));
-    } catch (requestError) {
-      privateFieldsError = requestError;
+    const fieldsByLead = new Map();
+    const fieldBatchSize = 500;
+    for (let offset = 0; offset < leads.length; offset += fieldBatchSize) {
+      try {
+        ({ data: privateFields, error: privateFieldsError } = await client.rpc(
+          "manager_lead_private_fields",
+          { p_lead_ids: leads.slice(offset, offset + fieldBatchSize).map(lead => lead.id) }
+        ));
+      } catch (requestError) {
+        privateFieldsError = requestError;
+      }
+      if (privateFieldsError) break;
+      for (const fields of privateFields || []) fieldsByLead.set(fields.lead_id, fields);
     }
 
     if (privateFieldsError) {
@@ -1963,9 +2270,6 @@ async function loadLeads() {
         "Não foi possível carregar observações e IDs do CRM.";
       console.error(privateFieldsError);
     } else {
-      const fieldsByLead = new Map(
-        (privateFields || []).map(fields => [fields.lead_id, fields])
-      );
       leads = leads.map(lead => {
         const fields = fieldsByLead.get(lead.id);
         return fields ? {
@@ -1983,54 +2287,7 @@ async function loadLeads() {
 
 
 function render() {
-
-  const query =
-    $("search")
-      .value
-      .trim()
-      .toLowerCase();
-
-  const product =
-    $("product").value;
-
-  const status =
-    $("status").value;
-
-
-  let filtered =
-    leads.filter(lead => {
-
-      const matchesSearch =
-        !query ||
-        [
-          lead.name,
-          lead.customer_phone,
-          lead.address
-        ]
-        .some(value =>
-          String(value ?? "")
-            .toLowerCase()
-            .includes(query)
-        );
-
-
-      const matchesProduct =
-        !product ||
-        lead.product_searched === product;
-
-
-      const matchesStatus =
-        !status ||
-        lead.status === status;
-
-
-      return (
-        matchesSearch &&
-        matchesProduct &&
-        matchesStatus
-      );
-
-    });
+  let filtered = visibleLeads();
 
 
   const overdueCount = leads.filter(isLeadFollowupOverdue).length;
@@ -2045,17 +2302,17 @@ function render() {
   filtered.sort((a, b) => Number(isLeadFollowupOverdue(b)) - Number(isLeadFollowupOverdue(a)) ||
     new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
 
-  $("total").textContent =
-    leads.length;
+  const periodLeads = leadsInSelectedPeriod();
+  $("total").textContent = periodLeads.length;
 
   $("novos").textContent =
-    leads.filter(
+    periodLeads.filter(
       lead =>
         lead.status === "NOVO"
     ).length;
 
   $("propostas").textContent =
-    leads.filter(
+    periodLeads.filter(
       lead =>
         [
           "PROPOSTA",
@@ -2064,7 +2321,7 @@ function render() {
     ).length;
 
   $("vendas").textContent =
-    leads.filter(
+    periodLeads.filter(
       lead =>
         ["VENDA", "PENDENTE_INSTALACAO", "CONECTADO"].includes(lead.status)
     ).length;
@@ -2624,6 +2881,20 @@ async function loadSellerManagement() {
     const payload = await response.json();
     if (!response.ok) throw new Error(payload.error || "Não foi possível carregar a equipe.");
     sellerTeamData = payload;
+    const invitationCounts = (payload.sellers || []).reduce((counts, seller) => {
+      const key = seller.invitationStatus || "Sem convite";
+      counts[key] = (counts[key] || 0) + 1;
+      return counts;
+    }, {});
+    const invitationSummary = $("invitationSummary");
+    invitationSummary.innerHTML = [
+      ["E-mails enviados", (payload.sellers || []).filter(seller => seller.onboarding?.email_status === "sent").length],
+      ["Aguardando primeiro acesso", invitationCounts["Aguardando primeiro acesso"] || 0],
+      ["Aceitos", invitationCounts.Aceito || 0],
+      ["Pendentes de envio", invitationCounts["Pendente de envio"] || 0],
+      ["Falhas no envio", invitationCounts["Falha no envio"] || 0],
+      ["Sem convite", invitationCounts["Sem convite"] || 0]
+    ].map(([label, count]) => '<div class="stat">' + escapeHtml(label) + '<b>' + count + '</b></div>').join("");
     status.textContent = payload.readiness?.email
       ? "E-mail automático pronto. O WhatsApp será enviado manualmente, sem custo da Meta."
       : "Envio automático de e-mail ainda não configurado. Novos cadastros ficam indisponíveis até configurá-lo.";
@@ -2653,23 +2924,46 @@ async function loadSellerManagement() {
       const name = document.createElement("td"); name.dataset.label = "Integrante"; name.textContent = seller.name;
       const role = document.createElement("td"); role.dataset.label = "Perfil"; role.textContent = seller.role === "EXECUTIVO" ? "Executivo Coordenador" : seller.role === "SUPERVISOR" ? "Supervisor" : "Vendedor";
       const region = document.createElement("td"); region.dataset.label = "Região"; region.textContent = seller.region || "—";
-      const email = document.createElement("td"); email.dataset.label = "E-mail"; email.textContent = seller.email || "—";
+      const email = document.createElement("td"); email.dataset.label = "E-mail";
+      email.append(document.createTextNode(seller.email || "—"));
+      const invitation = document.createElement("small"); invitation.className = "muted"; invitation.style.display = "block";
+      invitation.textContent = seller.invitationStatus || "Sem convite";
+      email.append(invitation);
+      if (seller.onboarding?.email_status === "sent" && seller.onboarding.updated_at) {
+        const lastEmail = document.createElement("small"); lastEmail.className = "muted"; lastEmail.style.display = "block";
+        const sentAt = new Date(seller.onboarding.updated_at);
+        lastEmail.textContent = "Último e-mail: " + (Number.isNaN(sentAt.getTime()) ? "data indisponível" : sentAt.toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" }));
+        email.append(lastEmail);
+      }
       const phone = document.createElement("td"); phone.dataset.label = "Telefone"; phone.className = "phone-cell"; phone.textContent = seller.phone ? formatPhone(seller.phone) : "—";
       const active = document.createElement("td"); active.dataset.label = "Estado"; active.textContent = state;
       const actionCell = document.createElement("td");
       actionCell.dataset.label = "Ação";
       actionCell.className = "team-actions";
-      if (seller.role === "VENDEDOR" || (payload.role === "GERENTE" && ["EXECUTIVO", "SUPERVISOR"].includes(seller.role))) {
+      if (payload.role === "GERENTE" && seller.seller_user_id && seller.email) {
+        const changeEmail = document.createElement("button"); changeEmail.type = "button"; changeEmail.className = "btn secondary icon-button";
+        changeEmail.textContent = "✉"; changeEmail.setAttribute("aria-label", "Atualizar e-mail de acesso de " + seller.name); changeEmail.title = "Atualizar e-mail de acesso";
+        changeEmail.addEventListener("click", () => updateSellerEmail(seller)); actionCell.append(changeEmail);
+      }
+      if (payload.role === "GERENTE" && seller.role === "VENDEDOR" && !seller.seller_user_id && seller.linkEligible) {
+        const linkAccess = document.createElement("button"); linkAccess.type = "button"; linkAccess.className = "btn secondary";
+        linkAccess.textContent = "Vincular acesso"; linkAccess.title = "Vincular conta existente a este cadastro";
+        linkAccess.addEventListener("click", () => linkLegacySellerAccess(seller)); actionCell.append(linkAccess);
+      }
+      const canManageAccess = seller.role === "VENDEDOR" ||
+        (payload.role === "GERENTE" && ["EXECUTIVO", "SUPERVISOR"].includes(seller.role));
+      if (canManageAccess && (seller.active || seller.seller_user_id)) {
         const action = document.createElement("button"); action.type = "button"; action.className = "btn secondary icon-button" + (seller.active ? " danger-icon" : " success-icon");
         action.textContent = seller.active ? "×" : "✓";
         action.setAttribute("aria-label", (seller.active ? "Desligar " : "Reativar ") + seller.name);
         action.title = seller.active ? "Desligar" : "Reativar";
-        action.addEventListener("click", () => setSellerActive(seller, !seller.active));
+        action.addEventListener("click", () => setSellerActive(seller, !seller.active, action));
         actionCell.append(action);
       }
-      if (seller.onboarding && seller.onboarding.email_status !== "sent") {
+      if (seller.onboarding && seller.seller_user_id && !seller.accountConfirmed
+        && ["sent", "pending", "failed"].includes(seller.onboarding.email_status)) {
         const retry = document.createElement("button"); retry.type = "button"; retry.className = "btn secondary icon-button"; retry.style.marginLeft = "6px"; retry.textContent = "↻";
-        retry.setAttribute("aria-label", "Reenviar convite por e-mail para " + seller.name); retry.title = "Reenviar e-mail";
+        retry.setAttribute("aria-label", "Reenviar convite por e-mail para " + seller.name); retry.title = "Reenviar convite por e-mail";
         retry.addEventListener("click", () => retrySellerDelivery(seller)); actionCell.append(retry);
       }
       if (seller.onboarding && seller.onboarding.email_status === "sent" && seller.phone) {
@@ -2693,6 +2987,8 @@ async function loadSellerManagement() {
 function updateSellerAssignmentFields() {
   if (!sellerTeamData) return;
   const role = $("sellerRole").value;
+  const createLabels = { VENDEDOR: "Cadastrar vendedor", SUPERVISOR: "Cadastrar supervisor", EXECUTIVO: "Cadastrar executivo" };
+  $("sellerCreateBtn").textContent = createLabels[role] || "Cadastrar integrante";
   const showExecutive = (sellerTeamData.role === "GERENTE" && role !== "EXECUTIVO")
     || (sellerTeamData.role === "SUPERVISOR" && role === "VENDEDOR" && sellerTeamData.currentExecutiveUserIds?.length > 1);
   const showSupervisor = role === "VENDEDOR" && sellerTeamData.role !== "SUPERVISOR";
@@ -2811,21 +3107,28 @@ async function submitSellerTransfer(seller, select, selectedSellerIds = [], supe
   }
 }
 
-async function setSellerActive(seller, active) {
+async function setSellerActive(seller, active, button) {
   if (!active && seller.role === "EXECUTIVO" &&
       !window.confirm("Desativar este executivo suspende o acesso dele e dos supervisores da equipe aos dados da equipe. As contas dos vendedores e seus leads permanecem ativos. Continuar?")) return;
   if (!active && seller.role === "SUPERVISOR" &&
       !window.confirm("Desativar este supervisor bloqueia o acesso dele à equipe. Os vendedores e seus leads permanecem ativos; o executivo responsável mantém o acesso. Continuar?")) return;
-  const status = $("sellerManagementStatus"); status.textContent = "Salvando…";
+  const status = $("sellerManagementStatus"); status.textContent = active ? "Reativando acesso…" : "Desligando acesso…";
+  if (button) button.disabled = true;
   try {
     const headers = await sellerApiHeaders();
     const response = await fetch("/api/sellers/" + encodeURIComponent(seller.id), { method: "PATCH", headers, body: JSON.stringify({ active }) });
-    const result = await response.json(); if (!response.ok) throw new Error(result.error || "Não foi possível alterar o acesso.");
+    let result;
+    try { result = await response.json(); } catch { throw new Error("O servidor retornou uma resposta inválida. Atualize a carteira e tente novamente."); }
+    if (!response.ok) throw new Error(result.error || "Não foi possível alterar o acesso.");
+    if (result.ok !== true || result.active !== active) throw new Error("O servidor não confirmou a alteração. Atualize a carteira e tente novamente.");
     status.textContent = active
       ? (seller.role === "VENDEDOR" ? "Vendedor reativado." : "Gestor reativado.")
       : (seller.role === "VENDEDOR" ? "Vendedor desligado; o acesso foi bloqueado." : "Gestor desligado; o acesso dele e da equipe ficou suspenso.");
     await loadSellerManagement();
-  } catch (error) { status.textContent = error.message; }
+  } catch (error) {
+    status.textContent = error.message;
+    if (button?.isConnected) button.disabled = false;
+  }
 }
 
 function sellerQrPng(url) {
@@ -2860,7 +3163,10 @@ async function createSeller(event) {
     return;
   }
   if (typeof window.qrcode !== "function") { status.textContent = "Gerador de QR indisponível. Atualize a página."; return; }
-  button.disabled = true; button.textContent = "Criando e enviando e-mail…"; status.textContent = "";
+  const role = $("sellerRole").value;
+  const createLabels = { VENDEDOR: "Cadastrar vendedor", SUPERVISOR: "Cadastrar supervisor", EXECUTIVO: "Cadastrar executivo" };
+  button.disabled = true; button.textContent = role === "EXECUTIVO" ? "Criando executivo…" : role === "SUPERVISOR" ? "Criando supervisor…" : "Criando vendedor…";
+  status.setAttribute("role", "status"); status.textContent = "Cadastro em andamento. Aguarde a confirmação.";
   try {
     const id = crypto.randomUUID();
     const canonical = new URL("/", QR_PRODUCTION_ORIGIN); canonical.searchParams.set("vendedor", id);
@@ -2868,18 +3174,77 @@ async function createSeller(event) {
 
     const headers = await sellerApiHeaders();
     const response = await fetch("/api/sellers", { method: "POST", headers, body: JSON.stringify({
-      sellerId: id, memberRole: $("sellerRole").value, name: $("sellerName").value.trim(), email: $("sellerEmail").value.trim(),
+      sellerId: id, memberRole: role, name: $("sellerName").value.trim(), email: $("sellerEmail").value.trim(),
       phone: $("sellerPhone").value.trim(), region: $("sellerRegion").value.trim(),
       executiveUserId: $("sellerExecutive").value || null, supervisorUserId: $("sellerSupervisor").value || null,
       qrPng
     }) });
     const result = await response.json(); if (!response.ok) throw new Error(result.error || "Não foi possível cadastrar.");
+    status.setAttribute("role", "status");
     status.textContent = result.message || "Cadastro processado.";
     if (result.created) $("sellerForm").reset();
     await loadSellerManagement();
     if (isManager) await loadManagerQrSellers();
+  } catch (error) {
+    status.setAttribute("role", "alert");
+    status.textContent = error.message || "Não foi possível concluir o cadastro. Nenhum convite foi confirmado.";
+    status.scrollIntoView?.({ block: "nearest", behavior: "smooth" });
+  }
+  finally { button.disabled = !sellerTeamData?.readiness?.ready; button.textContent = createLabels[role] || "Cadastrar integrante"; }
+}
+
+async function linkLegacySellerAccess(seller) {
+  const email = window.prompt("Informe o e-mail da conta de acesso para " + seller.name + ":");
+  if (!email) return;
+  if (!window.confirm("Vincular o e-mail " + email.trim() + " ao cadastro existente de " + seller.name + " e enviar o convite? Nenhuma nova linha de vendedor será criada.")) return;
+  const status = $("sellerManagementStatus"); status.textContent = "Vinculando cadastro existente e enviando convite…";
+  try {
+    if (typeof window.qrcode !== "function") throw new Error("Gerador de QR indisponível. Atualize a página.");
+    const canonical = new URL("/", QR_PRODUCTION_ORIGIN); canonical.searchParams.set("vendedor", seller.id);
+    const headers = await sellerApiHeaders();
+    const response = await fetch("/api/sellers/" + encodeURIComponent(seller.id) + "/link", {
+      method: "POST", headers, body: JSON.stringify({ email: email.trim(), qrPng: sellerQrPng(canonical.href) })
+    });
+    const result = await response.json(); if (!response.ok) throw new Error(result.error || "Não foi possível vincular o acesso.");
+    status.textContent = result.emailStatus === "sent"
+      ? "Acesso vinculado ao cadastro existente e convite enviado para " + email.trim() + "."
+      : "Acesso vinculado, mas o envio do convite falhou. Use o botão de reenvio na equipe.";
+    await loadSellerManagement();
+    if (isManager) await loadManagerQrSellers();
   } catch (error) { status.textContent = error.message; }
-  finally { button.disabled = !sellerTeamData?.readiness?.email; button.textContent = "Cadastrar vendedor"; }
+}
+
+async function updateSellerEmail(seller) {
+  const dialog = $("sellerEmailDialog");
+  const input = $("sellerEmailInput");
+  $("sellerEmailDescription").textContent = "Conta existente de " + seller.name + ". O e-mail atual é " + seller.email + ".";
+  input.value = "";
+  dialog.showModal();
+  input.focus();
+  const nextEmail = await new Promise(resolve => {
+    const form = $("sellerEmailForm");
+    const onSubmit = event => { event.preventDefault(); cleanup(); dialog.close(); resolve(input.value.trim().toLowerCase()); };
+    const onCancel = () => { cleanup(); dialog.close(); resolve(""); };
+    const cleanup = () => { form.removeEventListener("submit", onSubmit); $("cancelSellerEmail").removeEventListener("click", onCancel); };
+    form.addEventListener("submit", onSubmit);
+    $("cancelSellerEmail").addEventListener("click", onCancel);
+  });
+  if (!nextEmail) return;
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(nextEmail)) {
+    $("sellerManagementStatus").textContent = "Informe um endereço de e-mail válido.";
+    return;
+  }
+  if (!window.confirm("A alteração troca imediatamente o e-mail usado para entrar e não envia uma confirmação automática. Confirme que este endereço foi validado com o titular. Deseja continuar?")) return;
+  const status = $("sellerManagementStatus"); status.textContent = "Atualizando e-mail da conta existente…";
+  try {
+    const headers = await sellerApiHeaders();
+    const response = await fetch("/api/sellers/" + encodeURIComponent(seller.id) + "/email", {
+      method: "PATCH", headers, body: JSON.stringify({ expectedEmail: seller.email, email: nextEmail })
+    });
+    const result = await response.json(); if (!response.ok) throw new Error(result.error || "Não foi possível atualizar o e-mail.");
+    status.textContent = "E-mail de acesso atualizado para " + result.email + ". Nenhuma confirmação automática foi enviada.";
+    await loadSellerManagement();
+  } catch (error) { status.textContent = error.message; }
 }
 
 function parseSellerCsv(source) {
@@ -2934,6 +3299,7 @@ function parseSellerCsv(source) {
 
 const SELLER_CSV_BATCH_LIMIT = 90;
 let sellerCsvRows = [];
+let sellerCsvPreflightReady = false;
 
 function sellerCsvRole(value) {
   const role = value.replace(/[ _-]+/g, "");
@@ -2949,21 +3315,44 @@ function sellerCsvPhoneDigits(value) {
   return digits;
 }
 
+function sellerCsvBlockedEmail(value) {
+  return /@(?:claro|brasil|brasilcenter)\./i.test(String(value || "").trim());
+}
+
+function sellerCsvNormalizedName(value) {
+  return String(value || "").normalize("NFD").replace(/[\\u0300-\\u036f]/g, "")
+    .toLowerCase().trim().replace(/\\s+/g, " ");
+}
+
 function validateSellerCsvRows(rows) {
   const allowedRoles = new Set(sellerTeamData?.role === "GERENTE"
     ? ["VENDEDOR", "SUPERVISOR", "EXECUTIVO"]
     : sellerTeamData?.role === "EXECUTIVO" ? ["VENDEDOR", "SUPERVISOR"] : ["VENDEDOR"]);
   const byEmail = new Map();
   const existing = new Map((sellerTeamData?.sellers || []).map(item => [String(item.email || "").toLowerCase(), item]));
+  const existingNames = new Set((sellerTeamData?.sellers || []).map(item => sellerCsvNormalizedName(item.name)).filter(Boolean));
+  const existingPhones = new Set((sellerTeamData?.sellers || []).map(item => sellerCsvPhoneDigits(item.phone)).filter(phone => phone.length >= 10));
+  const byName = new Map(), byPhone = new Map();
   for (const item of rows) byEmail.set(item.email, (byEmail.get(item.email) || 0) + 1);
+  for (const item of rows) {
+    const name = sellerCsvNormalizedName(item.name), phone = sellerCsvPhoneDigits(item.phone);
+    if (name) byName.set(name, (byName.get(name) || 0) + 1);
+    if (phone.length >= 10) byPhone.set(phone, (byPhone.get(phone) || 0) + 1);
+  }
   rows.forEach(item => {
     item.errors = [];
     item.memberRole = sellerCsvRole(item.role);
     if (!item.memberRole || !allowedRoles.has(item.memberRole)) item.errors.push("Perfil não permitido para sua carteira");
     if (item.name.length < 2 || item.name.length > 120) item.errors.push("Nome inválido");
     if (!/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(item.email) || item.email.length > 254) item.errors.push("E-mail inválido");
+    if (sellerCsvBlockedEmail(item.email)) item.errors.push("Domínio não permitido para novos acessos");
     if (byEmail.get(item.email) > 1 || existing.has(item.email)) item.errors.push("E-mail duplicado");
-    if (![10, 11].includes(sellerCsvPhoneDigits(item.phone).length)) item.errors.push("WhatsApp deve ter DDD e 10 ou 11 dígitos");
+    const normalizedName = sellerCsvNormalizedName(item.name), phone = sellerCsvPhoneDigits(item.phone);
+    if (normalizedName && existingNames.has(normalizedName)) item.errors.push("Nome já cadastrado");
+    if (normalizedName && byName.get(normalizedName) > 1) item.errors.push("Nome duplicado no arquivo");
+    if (![10, 11].includes(phone.length)) item.errors.push("WhatsApp deve ter DDD e 10 ou 11 dígitos");
+    else if (existingPhones.has(phone)) item.errors.push("WhatsApp já cadastrado");
+    if ([10, 11].includes(phone.length) && byPhone.get(phone) > 1) item.errors.push("WhatsApp duplicado no arquivo");
     if (item.region.length < 2 || item.region.length > 80) item.errors.push("Região inválida");
     if (item.memberRole === "SUPERVISOR" && sellerTeamData?.role === "GERENTE" && !item.executiveEmail)
       item.errors.push("Informe o e-mail do executivo vinculado");
@@ -2993,6 +3382,21 @@ function validateSellerCsvRows(rows) {
   return rows;
 }
 
+async function preflightSellerCsvRows(rows) {
+  const headers = await sellerApiHeaders();
+  const response = await fetch("/api/sellers/preflight", {
+    method: "POST", headers,
+    body: JSON.stringify({ rows: rows.map(item => ({ line: item.line, name: item.name, email: item.email, phone: item.phone })) })
+  });
+  const result = await response.json();
+  if (!response.ok) throw new Error(result.error || "Não foi possível conferir a lista contra toda a base.");
+  const rowsByLine = new Map(rows.map(item => [item.line, item]));
+  for (const conflict of result.conflicts || []) {
+    const item = rowsByLine.get(conflict.line);
+    if (item) item.errors.push(...(conflict.reasons || []));
+  }
+}
+
 function renderSellerCsvPreview(rows) {
   const host = $("sellerCsvPreview"); host.replaceChildren();
   const table = document.createElement("table"), head = document.createElement("thead"), header = document.createElement("tr");
@@ -3012,7 +3416,7 @@ function renderSellerCsvPreview(rows) {
   table.append(body); host.append(table); host.classList.remove("hidden");
   $("sellerCsvCreateBtn").classList.remove("hidden");
   const pendingCount = rows.filter(item => !item.completed && !item.createdButPending).length;
-  $("sellerCsvCreateBtn").disabled = !pendingCount || pendingCount > SELLER_CSV_BATCH_LIMIT || rows.some(item => item.errors.length) || !sellerTeamData?.readiness?.ready;
+  $("sellerCsvCreateBtn").disabled = !sellerCsvPreflightReady || !pendingCount || pendingCount > SELLER_CSV_BATCH_LIMIT || rows.some(item => item.errors.length) || !sellerTeamData?.readiness?.ready;
 }
 
 function downloadSellerCsvTemplate() {
@@ -3023,11 +3427,19 @@ function downloadSellerCsvTemplate() {
 
 async function previewSellerCsv(file) {
   const status = $("sellerCsvStatus"); if (!file) return;
+  sellerCsvPreflightReady = false;
+  $("sellerCsvCreateBtn").disabled = true;
   if (file.size > 500000) { status.textContent = "O arquivo excede 500 KB."; return; }
   try {
     const rows = parseSellerCsv(await file.text());
     if (rows.length > 250) throw new Error("Importe no máximo 250 integrantes por arquivo.");
-    sellerCsvRows = validateSellerCsvRows(rows); renderSellerCsvPreview(sellerCsvRows);
+    sellerCsvRows = validateSellerCsvRows(rows);
+    if (!sellerCsvRows.some(item => item.errors.length)) {
+      status.textContent = "Conferindo nomes, WhatsApps e e-mails contra toda a base…";
+      await preflightSellerCsvRows(sellerCsvRows);
+      sellerCsvPreflightReady = !sellerCsvRows.some(item => item.errors.length);
+    }
+    renderSellerCsvPreview(sellerCsvRows);
     const invalid = sellerCsvRows.filter(item => item.errors.length).length;
     const pendingCount = sellerCsvRows.filter(item => !item.completed && !item.createdButPending).length;
     status.textContent = invalid
@@ -3036,7 +3448,7 @@ async function previewSellerCsv(file) {
         ? "Lote com " + pendingCount + " novos integrantes. O limite é " + SELLER_CSV_BATCH_LIMIT + " por arquivo para reservar margem diária. Divida a planilha em lotes menores; nenhum convite foi enviado."
       : sellerCsvRows.length + " integrante(s) prontos. Nenhum convite foi enviado; revise a lista antes de confirmar.";
   } catch (error) {
-    sellerCsvRows = []; $("sellerCsvPreview").classList.add("hidden"); $("sellerCsvCreateBtn").classList.add("hidden");
+    sellerCsvRows = []; sellerCsvPreflightReady = false; $("sellerCsvPreview").classList.add("hidden"); $("sellerCsvCreateBtn").classList.add("hidden"); $("sellerCsvFile").value = "";
     status.textContent = error.message || "Não foi possível ler o arquivo.";
   }
 }
@@ -3062,7 +3474,7 @@ async function createSellerFromCsv(item) {
 }
 
 async function createSellerCsvBatch() {
-  if (!sellerCsvRows.length || sellerCsvRows.some(item => item.errors.length)) return;
+  if (!sellerCsvPreflightReady || !sellerCsvRows.length || sellerCsvRows.some(item => item.errors.length)) return;
   const button = $("sellerCsvCreateBtn"), status = $("sellerCsvStatus");
   const pending = sellerCsvRows.filter(item => !item.completed && !item.createdButPending);
   if (pending.length > SELLER_CSV_BATCH_LIMIT) {
@@ -3289,6 +3701,14 @@ $("product")
 $("status")
   .onchange = render;
 
+$("periodStart").onchange = render;
+$("periodEnd").onchange = render;
+$("clearPeriodBtn").addEventListener("click", () => {
+  $("periodStart").value = "";
+  $("periodEnd").value = "";
+  render();
+});
+
 
 $("exportLeadsBtn").addEventListener("click", () => {
   const headers = ["Cliente", "Telefone", "Endereço", "Possui Claro", "Produto de interesse", "Data/Hora", "Status"];
@@ -3308,13 +3728,14 @@ $("exportMailingBtn").addEventListener("click", () => {
     $("sellerSetupStatus").textContent = "Carregue a equipe antes de exportar o mailing.";
     return;
   }
-  const rows = [["Integrante", "Perfil", "Região", "E-mail", "Telefone", "Estado"], ...sellers.map(seller => [
+  const rows = [["Integrante", "Perfil", "Região", "E-mail", "Telefone", "Estado", "Status do convite"], ...sellers.map(seller => [
     seller.name,
     seller.role === "EXECUTIVO" ? "Executivo Coordenador" : seller.role === "SUPERVISOR" ? "Supervisor" : "Vendedor",
     seller.region,
     seller.email,
     seller.phone,
-    seller.active ? "Ativo" : "Desligado"
+    seller.active ? "Ativo" : "Desligado",
+    seller.invitationStatus || "Sem convite"
   ])];
   downloadXlsx(rows, "Equipe", "mailing-equipe.xlsx");
 });
