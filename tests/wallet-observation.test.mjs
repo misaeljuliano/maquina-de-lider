@@ -427,6 +427,24 @@ test("selected period filters the lead table and dashboard totals", async () => 
   assert.equal(walletState.element("vendas").textContent, 1);
 });
 
+test("shared executive hierarchy filters leads and dashboard together", async () => {
+  const state = await wallet({ manager: true, leadRows: [
+    {id:"a",seller_id:"seller-a",name:"Equipe compartilhada",status:"CONECTADO",created_at:"2026-11-18T12:00:00Z"},
+    {id:"b",seller_id:"seller-b",name:"Outra equipe",status:"NOVO",created_at:"2026-11-18T12:00:00Z"}
+  ]});
+  vm.runInContext('sellerTeamData = {sellers:[{id:"seller-a",supervisor_user_id:"sup-a",executive_user_id:"exec-primary"},{id:"seller-b",supervisor_user_id:"sup-b",executive_user_id:"exec-other"}],supervisorExecutiveIds:{"sup-a":["exec-shared"]}}', state.context);
+  state.element("filterExecutive").value = "exec-shared";
+  vm.runInContext("render()", state.context);
+  assert.match(state.element("rows").innerHTML, /Equipe compartilhada/);
+  assert.doesNotMatch(state.element("rows").innerHTML, /Outra equipe/);
+  assert.equal(state.element("total").textContent, 1);
+  assert.equal(state.element("vendas").textContent, 1);
+  assert.equal(state.element("conversionRate").textContent, "Conversão: 100%");
+  state.element("filterSeller").value = "seller-b";
+  vm.runInContext("render()", state.context);
+  assert.equal(state.element("total").textContent, 0);
+});
+
 test("legacy NOVO and VENDA statuses remain visible but cannot be selected", async () => {
   for (const status of ["NOVO", "VENDA"]) {
     const walletState = await wallet({ manager: false, status });

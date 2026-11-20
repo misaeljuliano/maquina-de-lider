@@ -35,6 +35,7 @@ function serviceHeaders(env, extra = {}) {
   return {
     apikey: env.SUPABASE_SERVICE_ROLE_KEY || "",
     Authorization: "Bearer " + (env.SUPABASE_SERVICE_ROLE_KEY || ""),
+    ...(env.WALLET_AUDIT_ACTOR ? { "x-wallet-actor": env.WALLET_AUDIT_ACTOR } : {}),
     ...extra
   };
 }
@@ -443,6 +444,19 @@ async function transferTeamMember(env, leader, target, targetRole, body) {
 async function leaderSellersApi(request, env, url) {
   const leader = await requireLeader(request, env);
   if (leader.error) return leader.error;
+  env = { ...env, WALLET_AUDIT_ACTOR: leader.user.id };
+  if (request.method === "GET" && url.pathname === "/api/sellers/history") {
+    if (leader.role !== "GERENTE") return jsonResponse({error:"Somente o gerente pode consultar o histórico."},403);
+    const params = new URLSearchParams({select:"id,action,entity_type,entity_id,metadata,created_at",order:"created_at.desc,id.desc",limit:"100"});
+    const before = url.searchParams.get("before");
+    if (before) {
+      if (!Number.isFinite(Date.parse(before))) return jsonResponse({error:"Data inválida."},400);
+      params.set("created_at","lt."+new Date(before).toISOString());
+    }
+    const result = await serviceRequest(env,"/rest/v1/audit_log?"+params);
+    if (!result.ok) return jsonResponse({error:"Não foi possível carregar o histórico."},503);
+    return jsonResponse({events:result.data || []});
+  }
   const readiness = communicationReadiness(env);
   const onboardingRoute = url.pathname.match(/^\/api\/sellers\/([0-9a-f-]+)\/retry$/i);
   const linkRoute = url.pathname.match(/^\/api\/sellers\/([0-9a-f-]+)\/link$/i);
@@ -1206,6 +1220,10 @@ body{
 .period-filters{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:8px}
 .period-filters label{display:flex;align-items:center;gap:6px;color:#526071;font-size:12px}
 .period-filters input{height:var(--wallet-control-height);min-height:var(--wallet-control-height);padding:7px 9px;border:1px solid #cfd2d8;border-radius:9px;background:#fff}
+#hierarchyFilters{grid-column:1/-1}
+#hierarchyFilters select{height:var(--wallet-control-height);min-width:0;max-width:100%;padding:7px 9px;border:1px solid #cfd2d8;border-radius:9px;background:#fff}
+#hierarchyFilters label{flex:1 1 210px;min-width:0}
+#hierarchyFilters label select{flex:1;width:100%}
 .invitation-summary{display:grid;grid-template-columns:repeat(auto-fit,minmax(145px,1fr));gap:8px;margin:12px 0}
 .invitation-summary .stat{padding:10px 12px;font-size:12px}
 .invitation-summary .stat b{font-size:20px}
@@ -1678,6 +1696,15 @@ th{
 
   </div>
 
+  <section id="historyPanel" class="card hidden" style="margin-top:18px">
+    <details>
+      <summary>Histórico de alterações</summary>
+      <p class="muted">Últimas 100 alterações registradas desde a ativação do histórico.</p>
+      <button id="refreshHistory" class="btn secondary" type="button">Atualizar histórico</button>
+      <div id="historyStatus" role="status" aria-live="polite"></div>
+      <div id="historyRows"></div>
+    </details>
+  </section>
   <section id="managerQrPanel" class="card hidden" style="margin-top:18px">
     <div class="bar">
       <div>
@@ -1787,6 +1814,12 @@ th{
       </select>
     </div>
 
+    <div id="hierarchyFilters" class="period-filters hidden" aria-label="Filtrar equipe">
+      <label>Executivo <select id="filterExecutive"><option value="">Todos os executivos</option></select></label>
+      <label>Supervisor <select id="filterSupervisor"><option value="">Todos os supervisores</option></select></label>
+      <label>Vendedor <select id="filterSeller"><option value="">Todos os vendedores</option></select></label>
+      <span id="conversionRate" role="status" aria-live="polite"></span>
+    </div>
     <div class="period-filters" aria-label="Filtrar período dos leads">
       <label>De <input id="periodStart" type="date" aria-label="Data inicial"></label>
       <label>Até <input id="periodEnd" type="date" aria-label="Data final"></label>
@@ -2084,6 +2117,42 @@ function formatDate(value) {
 
 }
 
+function matchesHierarchy(lead) {
+  const executive = $("filterExecutive").value;
+  const supervisor = $("filterSupervisor").value;
+  const sellerId = $("filterSeller").value;
+  if (!executive && !supervisor && !sellerId) return true;
+  const seller = (sellerTeamData?.sellers || []).find(item => item.id === lead.seller_id);
+  if (!seller) return false;
+  const shared = sellerTeamData?.supervisorExecutiveIds?.[seller.supervisor_user_id] || [];
+  return (!sellerId || seller.id === sellerId)
+    && (!supervisor || seller.supervisor_user_id === supervisor || seller.seller_user_id === supervisor)
+    && (!executive || seller.executive_user_id === executive || seller.seller_user_id === executive || shared.includes(executive));
+}
+
+function refreshHierarchyFilters() {
+  const payload = sellerTeamData;
+  if (!payload) return;
+  $("hierarchyFilters").classList.remove("hidden");
+  const executive = $("filterExecutive").value;
+  const supervisor = $("filterSupervisor").value;
+  const members = payload.sellers || [];
+  const inExecutive = item => !executive || item.executive_user_id === executive || item.seller_user_id === executive
+    || (payload.supervisorExecutiveIds?.[item.supervisor_user_id] || []).includes(executive)
+    || (payload.supervisorExecutiveIds?.[item.seller_user_id] || []).includes(executive);
+  const choices = [
+    ["filterExecutive", "Todos os executivos", payload.assignableExecutives || []],
+    ["filterSupervisor", "Todos os supervisores", members.filter(item => item.role === "SUPERVISOR" && inExecutive(item)).map(item => ({id:item.seller_user_id,label:item.name}))],
+    ["filterSeller", "Todos os vendedores", members.filter(item => item.role === "VENDEDOR" && inExecutive(item) && (!supervisor || item.supervisor_user_id === supervisor)).map(item => ({id:item.id,label:item.name}))]
+  ];
+  for (const [id, label, options] of choices) {
+    const select = $(id), selected = select.value;
+    select.replaceChildren(new Option(label, ""));
+    options.forEach(option => select.add(new Option(option.label, option.id)));
+    select.value = options.some(option => option.id === selected) ? selected : "";
+  }
+}
+
 function visibleLeads() {
   const query = $("search").value.trim().toLowerCase();
   const product = $("product").value;
@@ -2101,7 +2170,7 @@ function visibleLeads() {
       && (start === null || createdAt >= start) && (end === null || createdAt <= end);
     const matchesSearch = !query || [lead.name, lead.customer_phone, lead.address]
       .some(value => String(value ?? "").toLowerCase().includes(query));
-    return matchesPeriod && matchesSearch && (!product || lead.product_searched === product)
+    return matchesHierarchy(lead) && matchesPeriod && matchesSearch && (!product || lead.product_searched === product)
       && (!status || lead.status === status);
   });
 }
@@ -2302,7 +2371,9 @@ function render() {
   filtered.sort((a, b) => Number(isLeadFollowupOverdue(b)) - Number(isLeadFollowupOverdue(a)) ||
     new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
 
-  const periodLeads = leadsInSelectedPeriod();
+  const periodLeads = filtered;
+  const salesCount = periodLeads.filter(lead => ["VENDA", "PENDENTE_INSTALACAO", "CONECTADO"].includes(lead.status)).length;
+  $("conversionRate").textContent = "Conversão: " + (periodLeads.length ? (100 * salesCount / periodLeads.length).toLocaleString("pt-BR", {maximumFractionDigits:1}) : "0") + "%";
   $("total").textContent = periodLeads.length;
 
   $("novos").textContent =
@@ -2681,7 +2752,12 @@ async function savePassword() {
 
 
 function clearSellerWalletData() {
+  $("historyPanel").classList.add("hidden");
+  $("historyRows").replaceChildren();
   leads = [];
+  sellerTeamData = null;
+  $("hierarchyFilters").classList.add("hidden");
+  ["filterExecutive", "filterSupervisor", "filterSeller"].forEach(id => { $(id).value = ""; });
   $("total").textContent = "0";
   $("novos").textContent = "0";
   $("propostas").textContent = "0";
@@ -2849,6 +2925,7 @@ async function showApp() {
   await loadLeads();
 
   if (leaderRole) await loadSellerManagement();
+  if (isManager) $("historyPanel").classList.remove("hidden");
   if (isManager) await loadManagerQrSellers();
 
   $("login").classList.add("hidden");
@@ -2881,6 +2958,8 @@ async function loadSellerManagement() {
     const payload = await response.json();
     if (!response.ok) throw new Error(payload.error || "Não foi possível carregar a equipe.");
     sellerTeamData = payload;
+    refreshHierarchyFilters();
+    render();
     const invitationCounts = (payload.sellers || []).reduce((counts, seller) => {
       const key = seller.invitationStatus || "Sem convite";
       counts[key] = (counts[key] || 0) + 1;
@@ -3701,6 +3780,14 @@ $("product")
 $("status")
   .onchange = render;
 
+["filterExecutive", "filterSupervisor", "filterSeller"].forEach(id => {
+  $(id).onchange = () => {
+    if (id === "filterExecutive") $("filterSupervisor").value = "";
+    if (id !== "filterSeller") $("filterSeller").value = "";
+    refreshHierarchyFilters();
+    render();
+  };
+});
 $("periodStart").onchange = render;
 $("periodEnd").onchange = render;
 $("clearPeriodBtn").addEventListener("click", () => {
@@ -3709,6 +3796,34 @@ $("clearPeriodBtn").addEventListener("click", () => {
   render();
 });
 
+
+async function loadChangeHistory() {
+  const button = $("refreshHistory");
+  button.disabled = true;
+  $("historyStatus").textContent = "Carregando…";
+  try {
+    const response = await fetch("/api/sellers/history", {headers:await sellerApiHeaders()});
+    const payload = await response.json();
+    if (!response.ok) throw new Error(payload.error || "Não foi possível carregar o histórico.");
+    const labels = {status:"Status",next_step:"Próxima ação",next_contact_at:"Retorno",name:"Nome",phone:"Telefone",region:"Região",active:"Ativo",seller_user_id:"Conta",supervisor_user_id:"Supervisor",executive_user_id:"Executivo",email:"E-mail",role:"Cargo"};
+    const types = {leads:"Lead",sellers:"Cadastro",supervisor_executives:"Associação",user_roles:"Cargo",users:"E-mail"};
+    const actions = {INSERT:"Criação",UPDATE:"Alteração",DELETE:"Remoção"};
+    $("historyRows").innerHTML = (payload.events || []).map(event => {
+      const metadata = event.metadata || {};
+      const changes = Object.entries(metadata.changes || {}).map(([field,change]) =>
+        escapeHtml(labels[field] || field) + ": " + escapeHtml(String(change.before ?? "—")) + " → " + escapeHtml(String(change.after ?? "—"))
+      ).join("<br>");
+      return '<article style="padding:12px 0;border-bottom:1px solid #e6e8ec"><b>' + escapeHtml(actions[event.action] || event.action) + " · " + escapeHtml(types[event.entity_type] || event.entity_type)
+        + '</b><div>' + escapeHtml(metadata.label || event.entity_id || "") + '</div><div class="muted">' + escapeHtml(formatDate(event.created_at)) + " · " + escapeHtml(metadata.actor_email || "Operação administrativa")
+        + '</div><div>' + changes + '</div></article>';
+    }).join("");
+    $("historyStatus").textContent = payload.events?.length ? payload.events.length + " registros carregados." : "Nenhuma alteração registrada ainda.";
+  } catch (error) {
+    $("historyRows").replaceChildren();
+    $("historyStatus").textContent = error.message;
+  } finally { button.disabled = false; }
+}
+$("refreshHistory").addEventListener("click", loadChangeHistory);
 
 $("exportLeadsBtn").addEventListener("click", () => {
   const headers = ["Cliente", "Telefone", "Endereço", "Possui Claro", "Produto de interesse", "Data/Hora", "Status"];
