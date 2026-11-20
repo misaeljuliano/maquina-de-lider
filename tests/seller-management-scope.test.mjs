@@ -13,7 +13,7 @@ const preview = {
 const ownSellerId = "70000000-0000-4000-8000-000000000010";
 const otherSellerId = "70000000-0000-4000-8000-000000000011";
 
-async function exerciseLeaderScope(t, role) {
+async function exerciseLeaderScope(t, role, { confirmedAt = null, onboardingPresent = true } = {}) {
   const leaderId = role === "EXECUTIVO"
     ? "70000000-0000-4000-8000-000000000020"
     : "70000000-0000-4000-8000-000000000021";
@@ -32,6 +32,9 @@ async function exerciseLeaderScope(t, role) {
     supervisor_user_id: role === "SUPERVISOR" ? otherLeaderId : supervisorId
   };
   const requests = [];
+  const supervisorExecutiveLinks = role === "SUPERVISOR"
+    ? [{ supervisor_user_id: supervisorId, executive_user_id: executiveId }]
+    : [];
 
   t.mock.method(globalThis, "fetch", async (input, init = {}) => {
     const url = new URL(input);
@@ -39,7 +42,7 @@ async function exerciseLeaderScope(t, role) {
     if (url.hostname !== "staging.supabase.co") throw new Error("Unexpected host " + url.hostname);
     if (url.pathname === "/auth/v1/user") return Response.json({ id: leaderId });
     if (url.pathname === "/auth/v1/admin/users") {
-      return Response.json([{ id: ownSeller.seller_user_id, email: "seller@example.test" }]);
+      return Response.json([{ id: ownSeller.seller_user_id, email: "seller@example.test", confirmed_at: confirmedAt }]);
     }
     if (url.pathname === "/rest/v1/user_roles") {
       const userFilter = url.searchParams.get("user_id") || "";
@@ -58,7 +61,13 @@ async function exerciseLeaderScope(t, role) {
       return Response.json({ user_metadata: { name: "Supervisor teste" } });
     }
     if (url.pathname === "/rest/v1/seller_onboarding") {
-      return Response.json([{ seller_id: ownSellerId, email_status: "sent", whatsapp_status: "pending" }]);
+      return Response.json(onboardingPresent ? [{ seller_id: ownSellerId, email_status: "sent", whatsapp_status: "pending" }] : []);
+    }
+    if (url.pathname === "/rest/v1/supervisor_executives") {
+      return Response.json(supervisorExecutiveLinks.filter(link =>
+        (!url.searchParams.has("supervisor_user_id") || url.searchParams.get("supervisor_user_id") === "eq." + link.supervisor_user_id)
+        && (!url.searchParams.has("executive_user_id") || url.searchParams.get("executive_user_id") === "eq." + link.executive_user_id)
+      ));
     }
     if (url.pathname === "/rest/v1/sellers" && init.method === "PATCH") {
       return Response.json([{ active: false }]);
@@ -93,6 +102,7 @@ async function exerciseLeaderScope(t, role) {
   const team = await getResponse.json();
   assert.deepEqual(team.sellers.map(seller => seller.id), [ownSellerId]);
   assert.equal(team.sellers[0].email, "seller@example.test");
+  assert.equal(team.sellers[0].invitationStatus, confirmedAt ? "Aceito" : onboardingPresent ? "Aguardando primeiro acesso" : "Sem convite");
   assert.ok(requests.some(({ url }) =>
     url.searchParams.get(role === "EXECUTIVO" ? "executive_user_id" : "supervisor_user_id") === "eq." + leaderId
   ));
@@ -121,4 +131,11 @@ test("executives only list and manage sellers assigned to their team", async t =
 
 test("supervisors only list and manage sellers assigned to their team", async t => {
   await exerciseLeaderScope(t, "SUPERVISOR");
+});
+
+test("already-confirmed legacy account is marked accepted without an invitation record", async t => {
+  await exerciseLeaderScope(t, "EXECUTIVO", {
+    confirmedAt: "2026-11-03T18:37:30.785063+00:00",
+    onboardingPresent: false
+  });
 });

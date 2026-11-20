@@ -75,7 +75,7 @@ function installAPI(t, { role, userId, team = [], profiles = [], roleMap = {}, t
       return json(team);
     }
     if (url.pathname === "/rest/v1/seller_onboarding") return json([]);
-    if (url.pathname === "/rest/v1/rpc/transfer_seller_hierarchy") return json({ ok: true });
+    if (url.pathname === "/rest/v1/rpc/transfer_seller_hierarchy_selection") return json({ ok: true });
     return json([]);
   });
   return calls;
@@ -121,6 +121,67 @@ test("manager can create an active hierarchy member under an executive", async t
   assert.equal(insertedRole.body.role, "SUPERVISOR");
 });
 
+test("manager can create an executive coordinator profile without a parent assignment", async t => {
+  const calls = installAPI(t, { role: "GERENTE", userId: ids.manager, team: [], roleMap: { [ids.manager]: "GERENTE" } });
+
+  const response = await worker.fetch(createRequest(ids.manager, { memberRole: "EXECUTIVO" }), preview);
+
+  assert.equal(response.status, 201);
+  const invite = calls.find(call => call.url.pathname === "/auth/v1/admin/generate_link");
+  assert.equal(invite.body.data.role, "EXECUTIVO");
+  const insertedSeller = calls.find(call => call.url.pathname === "/rest/v1/sellers" && call.method === "POST");
+  assert.equal(insertedSeller.body.executive_user_id, null);
+  assert.equal(insertedSeller.body.supervisor_user_id, null);
+  const insertedRole = calls.find(call => call.url.pathname === "/rest/v1/user_roles" && call.method === "POST");
+  assert.equal(insertedRole.body.role, "EXECUTIVO");
+});
+
+test("executive can create a seller assigned directly to the executive", async t => {
+  const executiveProfile = {
+    id: "80000000-0000-4000-8000-000000000019", seller_user_id: ids.executive,
+    name: "Executivo A", active: true, executive_user_id: null, supervisor_user_id: null
+  };
+  const calls = installAPI(t, {
+    role: "EXECUTIVO", userId: ids.executive, team: [], profiles: [executiveProfile],
+    roleMap: { [ids.executive]: "EXECUTIVO" }
+  });
+
+  const response = await worker.fetch(createRequest(ids.executive, { memberRole: "VENDEDOR" }), preview);
+
+  assert.equal(response.status, 201);
+  const invite = calls.find(call => call.url.pathname === "/auth/v1/admin/generate_link");
+  assert.equal(invite.body.data.role, "VENDEDOR");
+  const insertedSeller = calls.find(call => call.url.pathname === "/rest/v1/sellers" && call.method === "POST");
+  assert.equal(insertedSeller.body.executive_user_id, ids.executive);
+  assert.equal(insertedSeller.body.supervisor_user_id, null);
+  const insertedRole = calls.find(call => call.url.pathname === "/rest/v1/user_roles" && call.method === "POST");
+  assert.equal(insertedRole.body.role, "VENDEDOR");
+});
+
+test("executive can create a supervisor linked to the executive", async t => {
+  const executiveProfile = {
+    id: "80000000-0000-4000-8000-000000000020", seller_user_id: ids.executive,
+    name: "Executivo A", active: true, executive_user_id: null, supervisor_user_id: null
+  };
+  const calls = installAPI(t, {
+    role: "EXECUTIVO", userId: ids.executive, team: [], profiles: [executiveProfile],
+    roleMap: { [ids.executive]: "EXECUTIVO" }
+  });
+
+  const response = await worker.fetch(createRequest(ids.executive, { memberRole: "SUPERVISOR" }), preview);
+
+  assert.equal(response.status, 201);
+  const invite = calls.find(call => call.url.pathname === "/auth/v1/admin/generate_link");
+  assert.equal(invite.body.data.role, "SUPERVISOR");
+  const insertedSeller = calls.find(call => call.url.pathname === "/rest/v1/sellers" && call.method === "POST");
+  assert.equal(insertedSeller.body.executive_user_id, ids.executive);
+  assert.equal(insertedSeller.body.supervisor_user_id, null);
+  const insertedRole = calls.find(call => call.url.pathname === "/rest/v1/user_roles" && call.method === "POST");
+  assert.equal(insertedRole.body.role, "SUPERVISOR");
+  const hierarchyLink = calls.find(call => call.url.pathname === "/rest/v1/supervisor_executives" && call.method === "POST");
+  assert.deepEqual(hierarchyLink.body, { supervisor_user_id: ids.invited, executive_user_id: ids.executive });
+});
+
 test("supervisor-created sellers inherit both direct parent assignments", async t => {
   const ownProfile = {
     id: "80000000-0000-4000-8000-000000000002", seller_user_id: ids.supervisor,
@@ -143,8 +204,8 @@ test("supervisor-created sellers inherit both direct parent assignments", async 
   assert.equal(insertedSeller.body.supervisor_user_id, ids.supervisor);
 });
 
-for (const moveTeam of [true, false]) {
-  test("manager transfer passes the explicit team-carry choice atomically (moveTeam=" + moveTeam + ")", async t => {
+for (const moveSellerIds of [["80000000-0000-4000-8000-000000000030"], []]) {
+  test("manager transfer carries only the explicitly selected sellers atomically (count=" + moveSellerIds.length + ")", async t => {
     const target = {
       id: "80000000-0000-4000-8000-000000000003", seller_user_id: ids.supervisor,
       active: true, executive_user_id: ids.executive, supervisor_user_id: null
@@ -152,23 +213,24 @@ for (const moveTeam of [true, false]) {
     const profiles = [
       { ...target, name: "Supervisor A" },
       { id: "80000000-0000-4000-8000-000000000004", seller_user_id: ids.executive, name: "Executivo A", active: true },
-      { id: "80000000-0000-4000-8000-000000000005", seller_user_id: ids.executive2, name: "Executivo B", active: true }
+      { id: "80000000-0000-4000-8000-000000000005", seller_user_id: ids.executive2, name: "Executivo B", active: true },
+      { id: "80000000-0000-4000-8000-000000000030", seller_user_id: ids.seller, supervisor_user_id: ids.supervisor, executive_user_id: ids.executive, active: true }
     ];
     const calls = installAPI(t, {
       role: "GERENTE", userId: ids.manager, team: profiles, profiles, target,
-      roleMap: { [ids.manager]: "GERENTE", [ids.supervisor]: "SUPERVISOR", [ids.executive]: "EXECUTIVO", [ids.executive2]: "EXECUTIVO" }
+      roleMap: { [ids.manager]: "GERENTE", [ids.supervisor]: "SUPERVISOR", [ids.executive]: "EXECUTIVO", [ids.executive2]: "EXECUTIVO", [ids.seller]: "VENDEDOR" }
     });
 
     const response = await worker.fetch(new Request("https://wallet-staging.example.test/api/sellers/" + target.id, {
       method: "PATCH", headers: { authorization: "Bearer test-token", "content-type": "application/json" },
-      body: JSON.stringify({ transfer: { executiveUserId: ids.executive2, moveTeam } })
+      body: JSON.stringify({ transfer: { executiveUserId: ids.executive2, moveSellerIds } })
     }), preview);
 
     assert.equal(response.status, 200);
-    const transfer = calls.find(call => call.url.pathname === "/rest/v1/rpc/transfer_seller_hierarchy");
+    const transfer = calls.find(call => call.url.pathname === "/rest/v1/rpc/transfer_seller_hierarchy_selection");
     assert.ok(transfer);
     assert.equal(transfer.body.p_new_executive_user_id, ids.executive2);
-    assert.equal(transfer.body.p_move_team, moveTeam);
+    assert.deepEqual(transfer.body.p_move_seller_ids, moveSellerIds);
     assert.equal(transfer.body.p_expected_executive_user_id, ids.executive);
   });
 }
@@ -247,7 +309,8 @@ test("executive can reassign a seller to a supervisor in the same team", async t
     role: "EXECUTIVO", userId: ids.executive, target,
     team: [target, supervisorProfile],
     profiles: [ownExecutiveProfile],
-    roleMap: { [ids.executive]: "EXECUTIVO", [ids.seller]: "VENDEDOR", [ids.supervisor]: "SUPERVISOR" }
+    roleMap: { [ids.executive]: "EXECUTIVO", [ids.seller]: "VENDEDOR", [ids.supervisor]: "SUPERVISOR" },
+    supervisorExecutiveLinks: [{ supervisor_user_id: ids.supervisor, executive_user_id: ids.executive }]
   });
 
   const response = await worker.fetch(new Request("https://wallet-staging.example.test/api/sellers/" + target.id, {
@@ -256,7 +319,7 @@ test("executive can reassign a seller to a supervisor in the same team", async t
   }), preview);
 
   assert.equal(response.status, 200);
-  const transfer = calls.find(call => call.url.pathname === "/rest/v1/rpc/transfer_seller_hierarchy");
+  const transfer = calls.find(call => call.url.pathname === "/rest/v1/rpc/transfer_seller_hierarchy_selection");
   assert.equal(transfer.body.p_new_executive_user_id, ids.executive);
   assert.equal(transfer.body.p_new_supervisor_user_id, ids.supervisor);
 });
@@ -276,7 +339,8 @@ test("supervisor can return a direct seller to its own executive", async t => {
   };
   const calls = installAPI(t, {
     role: "SUPERVISOR", userId: ids.supervisor, target, team: [target], profiles: [ownProfile, executiveProfile],
-    roleMap: { [ids.supervisor]: "SUPERVISOR", [ids.executive]: "EXECUTIVO", [ids.seller]: "VENDEDOR" }
+    roleMap: { [ids.supervisor]: "SUPERVISOR", [ids.executive]: "EXECUTIVO", [ids.seller]: "VENDEDOR" },
+    supervisorExecutiveLinks: [{ supervisor_user_id: ids.supervisor, executive_user_id: ids.executive }]
   });
 
   const response = await worker.fetch(new Request("https://wallet-staging.example.test/api/sellers/" + target.id, {
@@ -285,7 +349,7 @@ test("supervisor can return a direct seller to its own executive", async t => {
   }), preview);
 
   assert.equal(response.status, 200);
-  const transfer = calls.find(call => call.url.pathname === "/rest/v1/rpc/transfer_seller_hierarchy");
+  const transfer = calls.find(call => call.url.pathname === "/rest/v1/rpc/transfer_seller_hierarchy_selection");
   assert.equal(transfer.body.p_new_executive_user_id, ids.executive);
   assert.equal(transfer.body.p_new_supervisor_user_id, null);
 });
